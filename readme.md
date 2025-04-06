@@ -21,6 +21,10 @@ Pour compiler et exécuter Dalle, vous devez installer les bibliothèques suivan
   - Ubuntu : `sudo apt-get install libcurl4-openssl-dev`
 - **Bibliothèques standard C** : Inclues dans `libc6-dev` (généralement déjà installé).
   - Ubuntu : `sudo apt-get install libc6-dev`
+  - 
+compilation
+
+gcc -o forth -O3 -Wall -flto main.c memory_forth.c executeinstruction.c compiletoken.c images.c dictionnary.c env.c utils.c irc.c interpret.c -lgmp -lcurl
 
 Vérifiez que GCC est installé :
 ```bash
