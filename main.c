@@ -13,10 +13,6 @@
 #include <curl/curl.h>
 #include "memory_forth.h"
 #include "forth_bot.h"
- 
-
- 
-// Variables globales
 
 Command queue[QUEUE_SIZE];
 int queue_head = 0, queue_tail = 0;
@@ -28,7 +24,6 @@ int irc_socket = -1;
 mpz_t mpz_pool[MPZ_POOL_SIZE];
 char *channel;
 
-// Fonctions utilitaires
 void init_mpz_pool() {
     for (int i = 0; i < MPZ_POOL_SIZE; i++) mpz_init(mpz_pool[i]);
 }
@@ -37,22 +32,18 @@ void clear_mpz_pool() {
     for (int i = 0; i < MPZ_POOL_SIZE; i++) mpz_clear(mpz_pool[i]);
 }
 
+
+
 void enqueue(const char *cmd, const char *nick) {
     pthread_mutex_lock(&queue_mutex);
-
     if ((queue_tail + 1) % QUEUE_SIZE != queue_head) {
         strncpy(queue[queue_tail].cmd, cmd, sizeof(queue[queue_tail].cmd) - 1);
         queue[queue_tail].cmd[sizeof(queue[queue_tail].cmd) - 1] = '\0';
         strncpy(queue[queue_tail].nick, nick, sizeof(queue[queue_tail].nick) - 1);
         queue[queue_tail].nick[sizeof(queue[queue_tail].nick) - 1] = '\0';
-
         queue_tail = (queue_tail + 1) % QUEUE_SIZE;
-    } else {
-        printf("Queue full, dropping command: %s from %s\n", cmd, nick);
-        fflush(stdout);
     }
     pthread_mutex_unlock(&queue_mutex);
- 
 }
 
 Command *dequeue() {
@@ -65,9 +56,6 @@ Command *dequeue() {
     pthread_mutex_unlock(&queue_mutex);
     return cmd;
 }
-
- 
- 
 
 struct irc_message {
     char *prefix;
@@ -85,43 +73,22 @@ void parse_irc_message(const char *line, struct irc_message *msg) {
     if (!line || !*line) return;
 
     char *copy = strdup(line);
-    if (!copy) {
-        printf("Failed to strdup line\n");
-        fflush(stdout);
-        return;
-    }
+    if (!copy) return;
 
     char *token;
     char *rest = copy;
 
-    // Préfixe
     if (copy[0] == ':') {
         token = strtok_r(rest, " ", &rest);
-        if (token) {
-            msg->prefix = strdup(token + 1);
-            if (!msg->prefix) {
-                printf("Failed to alloc prefix\n");
-                fflush(stdout);
-            }
-        }
+        if (token) msg->prefix = strdup(token + 1);
     }
 
-    // Commande
     token = strtok_r(rest, " ", &rest);
-    if (token) {
-        msg->command = strdup(token);
-        if (!msg->command) {
-            printf("Failed to alloc command\n");
-            fflush(stdout);
-        }
-    }
+    if (token) msg->command = strdup(token);
 
-    // Arguments
     int max_args = 10;
     msg->args = malloc(max_args * sizeof(char *));
     if (!msg->args) {
-        printf("Failed to alloc args\n");
-        fflush(stdout);
         free(copy);
         return;
     }
@@ -132,19 +99,12 @@ void parse_irc_message(const char *line, struct irc_message *msg) {
         if (token[0] == ':') {
             size_t len = strlen(token + 1);
             char *arg = malloc(len + 1);
-            if (!arg) {
-                printf("Failed to alloc arg with colon\n");
-                fflush(stdout);
-                break;
-            }
+            if (!arg) break;
             strcpy(arg, token + 1);
-            // Concaténer le reste sans realloc complexe
             if (rest && *rest) {
                 size_t rest_len = strlen(rest);
                 char *temp = malloc(len + rest_len + 2);
                 if (!temp) {
-                    printf("Failed to alloc temp arg\n");
-                    fflush(stdout);
                     free(arg);
                     break;
                 }
@@ -160,15 +120,12 @@ void parse_irc_message(const char *line, struct irc_message *msg) {
             }
         }
         msg->args[arg_index++] = strdup(token);
-        if (!msg->args[arg_index - 1]) {
-            printf("Failed to alloc arg %d\n", arg_index - 1);
-            fflush(stdout);
-        }
     }
     msg->arg_count = arg_index;
 
     free(copy);
 }
+
 void free_irc_message(struct irc_message *msg) {
     if (msg->prefix) free(msg->prefix);
     if (msg->command) free(msg->command);
@@ -183,16 +140,17 @@ void free_irc_message(struct irc_message *msg) {
     msg->args = NULL;
     msg->arg_count = 0;
 }
- 
+
 int main(int argc, char *argv[]) {
     char *server_name = "labynet.fr";
-    char *bot_nick = "forth";
+    char bot_nick[512] = "forth";
     channel = "#labynet";
-    struct addrinfo hints, *res, *p;
+    struct addrinfo hints, *res;
 
-    if (argc != 4) {
+    if (argc == 4) { // Corriger la condition
         server_name = argv[1];
-        bot_nick = argv[2];
+        strncpy(bot_nick, argv[2], sizeof(bot_nick) - 1);
+        bot_nick[sizeof(bot_nick) - 1] = '\0';
         channel = argv[3];
     }
 
@@ -206,47 +164,48 @@ int main(int argc, char *argv[]) {
     pthread_detach(interpret_tid);
 
     while (1) {
+        printf("Resolving %s...\n", server_name);
+        fflush(stdout);
         memset(&hints, 0, sizeof(hints));
-        hints.ai_family = AF_UNSPEC;     // IPv4 ou IPv6
-        hints.ai_socktype = SOCK_STREAM; // TCP
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
 
         int status = getaddrinfo(server_name, "6667", &hints, &res);
         if (status != 0) {
+            printf("getaddrinfo failed: %s\n", gai_strerror(status));
+            fflush(stdout);
             sleep(5);
             continue;
         }
 
-        char server_ip[INET6_ADDRSTRLEN];
-        int connected = 0;
-        for (p = res; p != NULL; p = p->ai_next) {
-            void *addr;
-            if (p->ai_family == AF_INET) {
-                struct sockaddr_in *ipv4 = (struct sockaddr_in *)p->ai_addr;
-                addr = &(ipv4->sin_addr);
-            } else {
-                struct sockaddr_in6 *ipv6 = (struct sockaddr_in6 *)p->ai_addr;
-                addr = &(ipv6->sin6_addr);
-            }
-            inet_ntop(p->ai_family, addr, server_ip, sizeof(server_ip));
-            irc_connect(server_ip, bot_nick, channel);
-            if (irc_socket != -1) {
-                connected = 1;
-                break;
-            }
-        }
+        char server_ip[INET_ADDRSTRLEN];
+        struct sockaddr_in *ipv4 = (struct sockaddr_in *)res->ai_addr;
+        inet_ntop(AF_INET, &(ipv4->sin_addr), server_ip, sizeof(server_ip));
+        printf("Trying to connect to %s with nick %s...\n", server_ip, bot_nick);
+        fflush(stdout);
+        irc_connect(server_ip, bot_nick);
         freeaddrinfo(res);
 
-        if (!connected) {
+        if (irc_socket == -1) {
+            printf("Failed to connect to %s\n", server_ip);
+            fflush(stdout);
             sleep(5);
             continue;
         }
+        printf("Connected to %s\n", server_ip);
+        fflush(stdout);
 
         char buffer[4096];
         size_t buffer_pos = 0;
+        int registered = 0;
 
         while (1) {
+            //printf("Waiting for data...\n");
+            //fflush(stdout);
             int bytes = recv(irc_socket, buffer + buffer_pos, sizeof(buffer) - buffer_pos - 1, 0);
             if (bytes <= 0) {
+                printf("Disconnected\n");
+                fflush(stdout);
                 close(irc_socket);
                 irc_socket = -1;
                 sleep(5);
@@ -254,58 +213,94 @@ int main(int argc, char *argv[]) {
             }
             buffer_pos += bytes;
             buffer[buffer_pos] = '\0';
+            // printf("Received %d bytes: %s\n", bytes, buffer);
+            // fflush(stdout);
 
             char *start = buffer;
             char *end;
             while ((end = strstr(start, "\r\n"))) {
                 *end = '\0';
                 char *line = start;
+                // printf("Processing line: %s\n", line);
+                // fflush(stdout);
 
                 struct irc_message msg = {0};
                 parse_irc_message(line, &msg);
-
-                if (msg.command && strcmp(msg.command, "PING") == 0 && msg.arg_count > 0) {
-                    char pong[512];
-                    snprintf(pong, sizeof(pong), "PONG :%s\r\n", msg.args[0]);
-                    send(irc_socket, pong, strlen(pong), 0);
-                } else if (msg.command && strcmp(msg.command, "PRIVMSG") == 0 && msg.arg_count >= 2) {
-                    if (strcmp(msg.args[0], channel) == 0) {
-                        char *cmd_start = msg.args[1];
-                        char prefix[512];
-                        snprintf(prefix, sizeof(prefix), "%s:", bot_nick);
-                        if (strncmp(cmd_start, prefix, strlen(prefix)) == 0) {
-                            char *trimmed_cmd = cmd_start + strlen(prefix);
-                            while (isspace((unsigned char)*trimmed_cmd)) trimmed_cmd++;
-                            size_t len = strlen(trimmed_cmd);
-                            while (len > 0 && isspace((unsigned char)trimmed_cmd[len - 1])) {
-                                trimmed_cmd[--len] = '\0';
-                            }
-
-                            char nick[MAX_STRING_SIZE];
-                            if (msg.prefix) {
-                                char *nick_end = strchr(msg.prefix, '!');
-                                if (nick_end) {
-                                    strncpy(nick, msg.prefix, nick_end - msg.prefix);
-                                    nick[nick_end - msg.prefix] = '\0';
-                                } else {
-                                    strcpy(nick, msg.prefix);
+                /*if (msg.command) {
+                    printf("Command: %s, Args: %d\n", msg.command, msg.arg_count);
+                    for (int i = 0; i < msg.arg_count; i++) {
+                        printf("Arg %d: %s\n", i, msg.args[i]);
+                    }
+                    fflush(stdout);
+                }
+  				*/
+                if (msg.command) {
+                    if (strcmp(msg.command, "001") == 0) {
+                        registered = 1;
+                        //printf("Registration complete, joining %s\n", channel);
+                        // fflush(stdout);
+                        char join_msg[512];
+                        snprintf(join_msg, sizeof(join_msg), "JOIN %s\r\n", channel);
+                        send(irc_socket, join_msg, strlen(join_msg), 0);
+                        // printf("Sent: %s", join_msg);
+                        // fflush(stdout);
+                    } else if (strcmp(msg.command, "433") == 0) {
+                        char new_nick[512];
+                    	 snprintf(new_nick, sizeof(new_nick), "%s_", bot_nick);
+                        char nick_msg[512];
+                        snprintf(nick_msg, sizeof(nick_msg), "NICK %s\r\n", new_nick);
+                        send(irc_socket, nick_msg, strlen(nick_msg), 0);
+                        //printf("Nickname %s in use, trying %s\n", bot_nick, new_nick);
+                        //fflush(stdout);
+                        strncpy(bot_nick, new_nick, sizeof(bot_nick) - 1);
+                        bot_nick[sizeof(bot_nick) - 1] = '\0';
+                    } else if (strcmp(msg.command, "PING") == 0 && msg.arg_count > 0) {
+                        char pong[512];
+                        snprintf(pong, sizeof(pong), "PONG :%s\r\n", msg.args[0]);
+                        send(irc_socket, pong, strlen(pong), 0);
+                        //printf("Sent PONG\n");
+                        //fflush(stdout);
+                    } else if (registered && strcmp(msg.command, "PRIVMSG") == 0 && msg.arg_count >= 2) {
+                        if (strcmp(msg.args[0], channel) == 0) {
+                            char *cmd_start = msg.args[1];
+                            char prefix[512];
+                            snprintf(prefix, sizeof(prefix), "%s:", bot_nick);
+                            if (strncmp(cmd_start, prefix, strlen(prefix)) == 0) {
+                                char *trimmed_cmd = cmd_start + strlen(prefix);
+                                while (isspace((unsigned char)*trimmed_cmd)) trimmed_cmd++;
+                                size_t len = strlen(trimmed_cmd);
+                                while (len > 0 && isspace((unsigned char)trimmed_cmd[len - 1])) {
+                                    trimmed_cmd[--len] = '\0';
                                 }
-                            } else {
-                                strcpy(nick, "unknown");
-                            }
 
-                            if (strcmp(trimmed_cmd, "QUIT") == 0) {
-                                Env *env = findEnv(nick);
-                                if (env) {
-                                    freeEnv(nick);
-                                    char quit_msg[512];
-                                    snprintf(quit_msg, sizeof(quit_msg), "Environment for %s has been freed.", nick);
-                                    send_to_channel(quit_msg);
+                                char nick[MAX_STRING_SIZE];
+                                if (msg.prefix) {
+                                    char *nick_end = strchr(msg.prefix, '!');
+                                    if (nick_end) {
+                                        strncpy(nick, msg.prefix, nick_end - msg.prefix);
+                                        nick[nick_end - msg.prefix] = '\0';
+                                    } else {
+                                        strcpy(nick, msg.prefix);
+                                    }
                                 } else {
-                                    send_to_channel("No environment found for you to quit.");
+                                    strcpy(nick, "unknown");
                                 }
-                            } else {
-                                enqueue(trimmed_cmd, nick);
+                                //printf("Enqueuing: %s for %s\n", trimmed_cmd, nick);
+                                //fflush(stdout);
+
+                                if (strcmp(trimmed_cmd, "QUIT") == 0) {
+                                    Env *env = findEnv(nick);
+                                    if (env) {
+                                        freeEnv(nick);
+                                        char quit_msg[512];
+                                        snprintf(quit_msg, sizeof(quit_msg), "Environment for %s has been freed.", nick);
+                                        send_to_channel(quit_msg);
+                                    } else {
+                                        send_to_channel("No environment found for you to quit.");
+                                    }
+                                } else {
+                                    enqueue(trimmed_cmd, nick);
+                                }
                             }
                         }
                     }
@@ -323,6 +318,8 @@ int main(int argc, char *argv[]) {
                 buffer_pos = remaining;
                 buffer[buffer_pos] = '\0';
             } else if (buffer_pos == sizeof(buffer) - 1) {
+                printf("Buffer full, resetting\n");
+                fflush(stdout);
                 buffer_pos = 0;
                 buffer[0] = '\0';
             }
