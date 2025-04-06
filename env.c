@@ -1,5 +1,8 @@
+#include <pthread.h>
 #include "memory_forth.h"
 #include "forth_bot.h"
+
+pthread_mutex_t env_mutex;  // Déclaration sans initialisation ici
 
 void initEnv(Env *env, const char *nick) {
     strncpy(env->nick, nick, MAX_STRING_SIZE - 1);
@@ -77,7 +80,9 @@ void freeEnv(const char *nick) {
     if (prev) prev->next = curr->next;
     else head = curr->next;
 
+    pthread_mutex_lock(&env_mutex);
     if (curr == currentenv) currentenv = NULL;
+    pthread_mutex_unlock(&env_mutex);
 
     for (int i = 0; i < STACK_SIZE; i++) {
         mpz_clear(curr->main_stack.data[i]);
@@ -113,8 +118,16 @@ Env *findEnv(const char *nick) {
     Env *curr = head;
     while (curr && strcmp(curr->nick, nick) != 0) curr = curr->next;
     if (curr) {
+        pthread_mutex_lock(&env_mutex);
         currentenv = curr;
+        pthread_mutex_unlock(&env_mutex);
         return curr;
     }
     return NULL;
+}
+
+void set_currentenv(Env *env) {
+    pthread_mutex_lock(&env_mutex);
+    currentenv = env;
+    pthread_mutex_unlock(&env_mutex);
 }
