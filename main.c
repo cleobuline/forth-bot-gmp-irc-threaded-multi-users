@@ -63,7 +63,7 @@ struct irc_message {
     char **args;
     int arg_count;
 };
-
+ 
 void parse_irc_message(const char *line, struct irc_message *msg) {
     msg->prefix = NULL;
     msg->command = NULL;
@@ -125,7 +125,8 @@ void parse_irc_message(const char *line, struct irc_message *msg) {
 
     free(copy);
 }
-
+ 
+ 
 void free_irc_message(struct irc_message *msg) {
     if (msg->prefix) free(msg->prefix);
     if (msg->command) free(msg->command);
@@ -164,8 +165,8 @@ int main(int argc, char *argv[]) {
     pthread_detach(interpret_tid);
 
     while (1) {
-        printf("Resolving %s...\n", server_name);
-        fflush(stdout);
+        //printf("Resolving %s...\n", server_name);
+        //fflush(stdout);
         memset(&hints, 0, sizeof(hints));
         hints.ai_family = AF_INET;
         hints.ai_socktype = SOCK_STREAM;
@@ -308,7 +309,7 @@ int main(int argc, char *argv[]) {
 
                 free_irc_message(&msg);
 
-            next_line:
+            
                 start = end + 2;
             }
 
