@@ -13,7 +13,7 @@
 #include <curl/curl.h>
 #include "memory_forth.h"
 #include "forth_bot.h"
- 
+
 void *interpret_thread(void *arg) {
  
     while (1) {
@@ -28,11 +28,11 @@ void *interpret_thread(void *arg) {
                     fflush(stdout);
                     continue;
                 }
-                currentenv = env;
+                set_currentenv(env);
 
                 initDictionary(env);
             } else {
-                currentenv = env;
+               set_currentenv(env);
             }
 
             if (!currentenv) {
