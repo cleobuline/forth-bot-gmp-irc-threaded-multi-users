@@ -40,7 +40,9 @@ void *interpret_thread(void *arg) {
                 fflush(stdout);
                 send_to_channel("Error: Environment not initialized");
             } else {
+                env->in_use= 1;
                 interpret(cmd->cmd, &env->main_stack);
+                env->in_use= 0;
             }
         } else {
             usleep(10000); // 10ms pour éviter une boucle trop rapide
