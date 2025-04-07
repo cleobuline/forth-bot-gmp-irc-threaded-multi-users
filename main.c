@@ -292,10 +292,19 @@ int main(int argc, char *argv[]) {
                                 if (strcmp(trimmed_cmd, "QUIT") == 0) {
                                     Env *env = findEnv(nick);
                                     if (env) {
+                                         if (env->in_use)
+                                         {
+                                        
+                                        char quit_msg[512];
+                                        snprintf(quit_msg, sizeof(quit_msg), "Operation impossible %s essayez plus tard ", nick);
+                                        send_to_channel(quit_msg);
+                                        }
+                                    else {
                                         freeEnv(nick);
                                         char quit_msg[512];
                                         snprintf(quit_msg, sizeof(quit_msg), "Environment for %s has been freed.", nick);
                                         send_to_channel(quit_msg);
+                                    }
                                     } else {
                                         send_to_channel("No environment found for you to quit.");
                                     }
