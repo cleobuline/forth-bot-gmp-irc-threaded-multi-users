@@ -188,6 +188,7 @@ typedef struct Env {
     char emit_buffer[512];
     int emit_buffer_pos;
     struct Env *next;
+    int in_use;  // Ajouté : 1 si utilisé par interpret_thread, 0 sinon
 } Env;
 
 void executeCompiledWord(CompiledWord *word, Stack *stack, int word_index);
@@ -221,13 +222,15 @@ char *pop_string() ;
 void set_error(const char *msg);
 void enqueue(const char *cmd, const char *nick);
 void send_to_channel(const char *msg) ;
-void irc_connect(const char *server_ip, const char *bot_nick, const char *channel)  ;
+void irc_connect(const char *server_ip, const char *bot_nick);
  void interpret(char *input, Stack *stack);
  void *interpret_thread(void *arg);
  void enqueue(const char *cmd, const char *nick);
  Command *dequeue();
+ void set_currentenv(Env *env);
 extern Env *head;
 extern Env *currentenv;
 extern mpz_t mpz_pool[MPZ_POOL_SIZE];
 extern char *channel;
 extern int irc_socket;
+extern pthread_mutex_t env_mutex;
