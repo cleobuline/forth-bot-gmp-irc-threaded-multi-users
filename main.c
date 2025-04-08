@@ -296,7 +296,7 @@ int main(int argc, char *argv[]) {
                                          {
                                         
                                         char quit_msg[512];
-                                        snprintf(quit_msg, sizeof(quit_msg), "Operation impossible %s essayez plus tard ", nick);
+                                        snprintf(quit_msg, sizeof(quit_msg), "Operation impossible %s essayez plus tard ( opération en cours ) ", nick);
                                         send_to_channel(quit_msg);
                                         }
                                     else {
