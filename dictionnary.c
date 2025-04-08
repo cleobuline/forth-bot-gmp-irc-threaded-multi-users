@@ -13,7 +13,7 @@
 #include <curl/curl.h>
 #include "memory_forth.h"
 #include "forth_bot.h"
- 
+
 void initDynamicDictionary(DynamicDictionary *dict) {
     dict->capacity = 16;
     dict->count = 0;
@@ -22,11 +22,50 @@ void initDynamicDictionary(DynamicDictionary *dict) {
         send_to_channel("Erreur : Échec de l’allocation du dictionnaire");
         exit(1);
     }
+
     for (long int i = 0; i < dict->capacity; i++) {
         dict->words[i].name = NULL;
         dict->words[i].code_length = 0;
+        dict->words[i].code_capacity = 16;
+        dict->words[i].code = (Instruction *)calloc(dict->words[i].code_capacity, sizeof(Instruction));
         dict->words[i].string_count = 0;
+        dict->words[i].string_capacity = 16;
+        dict->words[i].strings = (char **)calloc(dict->words[i].string_capacity, sizeof(char *));
         dict->words[i].immediate = 0;
+
+        if (!dict->words[i].code || !dict->words[i].strings) {
+            send_to_channel("Erreur : Échec de l’allocation des tableaux dans CompiledWord");
+            for (long int j = 0; j < i; j++) {
+                free(dict->words[j].code);
+                free(dict->words[j].strings);
+            }
+            free(dict->words);
+            exit(1);
+        }
+    }
+}
+
+void resizeCompiledWordArrays(CompiledWord *word, int is_code) {
+    if (is_code) {
+        long int new_capacity = word->code_capacity * 2;
+        Instruction *new_code = (Instruction *)realloc(word->code, new_capacity * sizeof(Instruction));
+        if (!new_code) {
+            send_to_channel("Erreur : Échec du redimensionnement du tableau code");
+            exit(1);
+        }
+        memset(new_code + word->code_capacity, 0, (new_capacity - word->code_capacity) * sizeof(Instruction));
+        word->code = new_code;
+        word->code_capacity = new_capacity;
+    } else {
+        long int new_capacity = word->string_capacity * 2;
+        char **new_strings = (char **)realloc(word->strings, new_capacity * sizeof(char *));
+        if (!new_strings) {
+            send_to_channel("Erreur : Échec du redimensionnement du tableau strings");
+            exit(1);
+        }
+        memset(new_strings + word->string_capacity, 0, (new_capacity - word->string_capacity) * sizeof(char *));
+        word->strings = new_strings;
+        word->string_capacity = new_capacity;
     }
 }
 
@@ -38,11 +77,29 @@ void resizeDynamicDictionary(DynamicDictionary *dict) {
         exit(1);
     }
     dict->words = new_words;
+
+    // Initialiser uniquement les nouvelles entrées
     for (long int i = dict->count; i < new_capacity; i++) {
         dict->words[i].name = NULL;
         dict->words[i].code_length = 0;
+        dict->words[i].code_capacity = 16;
+        dict->words[i].code = (Instruction *)calloc(dict->words[i].code_capacity, sizeof(Instruction));
         dict->words[i].string_count = 0;
+        dict->words[i].string_capacity = 16;
+        dict->words[i].strings = (char **)calloc(dict->words[i].string_capacity, sizeof(char *));
         dict->words[i].immediate = 0;
+
+        if (!dict->words[i].code || !dict->words[i].strings) {
+            send_to_channel("Erreur : Échec de l’allocation dans resizeDynamicDictionary");
+            for (long int j = 0; j < i; j++) {
+                if (j >= dict->count) { // Ne libérer que les nouvelles entrées
+                    free(dict->words[j].code);
+                    free(dict->words[j].strings);
+                }
+            }
+            free(dict->words);
+            exit(1);
+        }
     }
     dict->capacity = new_capacity;
 }
@@ -52,19 +109,44 @@ void addWord(DynamicDictionary *dict, const char *name, OpCode opcode, int immed
         resizeDynamicDictionary(dict);
     }
     CompiledWord *word = &dict->words[dict->count];
+
+    // Ne libérer les ressources que si elles existent et si ce n’est pas une nouvelle entrée vierge
+    if (word->name && word->code_length > 0) { // Vérifier si le mot était déjà utilisé
+        free(word->name);
+        for (int j = 0; j < word->string_count; j++) {
+            if (word->strings[j]) free(word->strings[j]);
+        }
+        free(word->code);
+        free(word->strings);
+    }
+
+    // Initialiser avec les nouvelles valeurs
     word->name = strdup(name);
+    word->code = (Instruction *)calloc(16, sizeof(Instruction));
     word->code[0].opcode = opcode;
     word->code_length = 1;
+    word->code_capacity = 16;
+    word->strings = (char **)calloc(16, sizeof(char *));
     word->string_count = 0;
+    word->string_capacity = 16;
     word->immediate = immediate;
+
+    if (!word->name || !word->code || !word->strings) {
+        send_to_channel("Erreur : Échec de l’allocation dans addWord");
+        if (word->name) free(word->name);
+        if (word->code) free(word->code);
+        if (word->strings) free(word->strings);
+        exit(1);
+    }
     dict->count++;
 }
-
 
 int findCompiledWordIndex(char *name) {
     if (!currentenv) return -1;
     for (long int i = 0; i < currentenv->dictionary.count; i++) {
-        if (currentenv->dictionary.words[i].name && strcmp(currentenv->dictionary.words[i].name, name) == 0) return i;
+        if (currentenv->dictionary.words[i].name && strcmp(currentenv->dictionary.words[i].name, name) == 0) {
+            return i;
+        }
     }
     return -1;
 }
@@ -79,7 +161,11 @@ void print_word_definition_irc(int index, Stack *stack) {
     char def_msg[512] = "";
     snprintf(def_msg, sizeof(def_msg), ": %s ", word->name);
 
-    long int branch_targets[WORD_CODE_SIZE];
+    long int *branch_targets = (long int *)malloc(word->code_capacity * sizeof(long int));
+    if (!branch_targets) {
+        send_to_channel("SEE: Memory allocation failed for branch targets");
+        return;
+    }
     int branch_depth = 0;
     int has_semicolon = 0;
 
@@ -139,7 +225,7 @@ void print_word_definition_irc(int index, Stack *stack) {
             case OP_J: snprintf(instr_str, sizeof(instr_str), "J "); break;
             case OP_DO:
                 snprintf(instr_str, sizeof(instr_str), "DO ");
-                branch_targets[branch_depth++] = instr.operand;
+                branch_targets[branch_depth++] = i;
                 break;
             case OP_LOOP:
                 snprintf(instr_str, sizeof(instr_str), "LOOP ");
@@ -167,20 +253,12 @@ void print_word_definition_irc(int index, Stack *stack) {
                 branch_targets[branch_depth++] = instr.operand;
                 break;
             case OP_ENDOF:
-                if (branch_depth > 0 && i + 1 == branch_targets[branch_depth - 1]) {
-                    snprintf(instr_str, sizeof(instr_str), "ENDOF ");
-                    branch_depth--;
-                } else {
-                    snprintf(instr_str, sizeof(instr_str), "ENDOF(%ld) ", instr.operand);
-                }
+                snprintf(instr_str, sizeof(instr_str), "ENDOF ");
+                if (branch_depth > 0) branch_depth--;
                 break;
             case OP_ENDCASE:
-                if (branch_depth > 0 && branch_targets[branch_depth - 1] <= i) {
-                    snprintf(instr_str, sizeof(instr_str), "ENDCASE ");
-                    branch_depth--;
-                } else {
-                    snprintf(instr_str, sizeof(instr_str), "ENDCASE ");
-                }
+                snprintf(instr_str, sizeof(instr_str), "ENDCASE ");
+                if (branch_depth > 0) branch_depth--;
                 break;
             case OP_END:
                 if (branch_depth > 0 && i + 1 == branch_targets[branch_depth - 1]) {
@@ -246,7 +324,9 @@ void print_word_definition_irc(int index, Stack *stack) {
                 snprintf(instr_str, sizeof(instr_str), "AGAIN ");
                 if (branch_depth > 0) branch_depth--;
                 break;
-            case OP_EXIT: snprintf(instr_str, sizeof(instr_str), "EXIT "); break;
+            case OP_EXIT:
+                snprintf(instr_str, sizeof(instr_str), "EXIT ");
+                break;
             case OP_WORDS: snprintf(instr_str, sizeof(instr_str), "WORDS "); break;
             case OP_FORGET:
                 if (instr.operand < word->string_count && word->strings[instr.operand]) {
@@ -279,10 +359,11 @@ void print_word_definition_irc(int index, Stack *stack) {
             case OP_NIP: snprintf(instr_str, sizeof(instr_str), "NIP "); break;
             case OP_CLEAR_STACK: snprintf(instr_str, sizeof(instr_str), "CLEAR-STACK "); break;
             case OP_CLOCK: snprintf(instr_str, sizeof(instr_str), "CLOCK "); break;
-            case OP_SEE:
-                snprintf(instr_str, sizeof(instr_str), "SEE ");
-                break;
+            case OP_SEE: snprintf(instr_str, sizeof(instr_str), "SEE "); break;
             case OP_2DROP: snprintf(instr_str, sizeof(instr_str), "2DROP "); break;
+            case OP_CONSTANT:
+                snprintf(instr_str, sizeof(instr_str), "%ld ", instr.operand);
+                break;
             default:
                 snprintf(instr_str, sizeof(instr_str), "(OP_%d %ld) ", instr.opcode, instr.operand);
                 break;
@@ -301,6 +382,7 @@ void print_word_definition_irc(int index, Stack *stack) {
     }
 
     send_to_channel(def_msg);
+    free(branch_targets);
 }
 
 void initDictionary(Env *env) {
@@ -368,6 +450,6 @@ void initDictionary(Env *env) {
     addWord(&env->dictionary, "CLEAR-STRINGS", OP_CLEAR_STRINGS, 0);
     addWord(&env->dictionary, "DELAY", OP_DELAY, 0);
     addWord(&env->dictionary, "EXIT", OP_EXIT, 0);
+    addWord(&env->dictionary, "MICRO", OP_MICRO, 0);
+    addWord(&env->dictionary, "MILLI", OP_MILLI, 0);
 }
-
-
