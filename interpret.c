@@ -14,107 +14,90 @@
 #include "memory_forth.h"
 #include "forth_bot.h"
 
-void *interpret_thread(void *arg) {
- 
-    while (1) {
-        Command *cmd = dequeue();
-        if (cmd) {
- 
-            Env *env = findEnv(cmd->nick);
-            if (!env) {
-                env = createEnv(cmd->nick);
-                if (!env) {
-                    printf("Failed to create env for %s\n", cmd->nick);
-                    fflush(stdout);
-                    continue;
-                }
-                set_currentenv(env);
+void *env_interpret_thread(void *arg) {
+    Env *env = (Env *)arg;
+    while (env->thread_running) {
+        Command cmd_buffer = {0};  // Buffer local pour la commande
+        int has_cmd = 0;
 
-                initDictionary(env);
-            } else {
-               set_currentenv(env);
-            }
+        pthread_mutex_lock(&env->queue_mutex);
+        while (env->queue_head == env->queue_tail && env->thread_running) {
+            pthread_cond_wait(&env->queue_cond, &env->queue_mutex);  // Attend un signal
+        }
+        if (env->queue_head != env->queue_tail) {
+            cmd_buffer = env->queue[env->queue_head];  // Copie locale pour éviter des problèmes
+            env->queue_head = (env->queue_head + 1) % QUEUE_SIZE;
+            has_cmd = 1;
+        }
+        pthread_mutex_unlock(&env->queue_mutex);
 
-            if (!currentenv) {
-                printf("currentenv is NULL for %s!\n", cmd->nick);
-                fflush(stdout);
-                send_to_channel("Error: Environment not initialized");
-            } else {
-                env->in_use= 1;
-                interpret(cmd->cmd, &env->main_stack);
-                env->in_use= 0;
-            }
-        } else {
-            usleep(10000); // 10ms pour éviter une boucle trop rapide
+        if (has_cmd) {
+            pthread_mutex_lock(&env->in_use_mutex);
+            env->in_use = 1;
+            pthread_mutex_unlock(&env->in_use_mutex);
+
+            interpret(cmd_buffer.cmd, &env->main_stack, env);
+
+            pthread_mutex_lock(&env->in_use_mutex);
+            env->in_use = 0;
+            pthread_mutex_unlock(&env->in_use_mutex);
         }
     }
     return NULL;
 }
-
  
- void interpret(char *input, Stack *stack) {
-    if (!currentenv) {
-        send_to_channel("DEBUG: currentenv is NULL");
+void interpret(char *input, Stack *stack, Env *env) {
+    if (!env) {
+        send_to_channel("DEBUG: env is NULL");
         return;
     }
-
-    currentenv->error_flag = 0;
-    currentenv->compile_error = 0;
-
+    env->error_flag = 0;
+    env->compile_error = 0;
     char *saveptr;
     char *token = strtok_r(input, " \t\n", &saveptr);
-    while (token && !currentenv->error_flag && !currentenv->compile_error) {
-        // Ignorer les commentaires Forth (entre parenthèses)
+    while (token && !env->error_flag && !env->compile_error) {
         if (strcmp(token, "(") == 0) {
             char *end = strstr(saveptr, ")");
-            if (end) {
-                saveptr = end + 1;
-            } else {
-                saveptr = NULL;  // Fin du commentaire non trouvée, on arrête
-            }
+            if (end) saveptr = end + 1;
+            else saveptr = NULL;
             token = strtok_r(NULL, " \t\n", &saveptr);
             continue;
         }
-
-        // Compiler ou interpréter le token
-        compileToken(token, &saveptr, currentenv);
-
-        // Si saveptr est NULL, on a fini de parser
+        compileToken(token, &saveptr, env);
         if (!saveptr) break;
-
-        // Passer au token suivant
         token = strtok_r(NULL, " \t\n", &saveptr);
     }
 
+   
     // Si on est en mode compilation et qu’il reste des structures de contrôle non terminées
-    if (currentenv->compiling && currentenv->control_stack_top > 0) {
-        set_error("Incomplete definition: unmatched control structures");
-        currentenv->compile_error = 1;
-        currentenv->compiling = 0;
-        currentenv->control_stack_top = 0;
+    if (env->compiling && env->control_stack_top > 0) {
+        set_error(env,"Incomplete definition: unmatched control structures");
+        env->compile_error = 1;
+        env->compiling = 0;
+        env->control_stack_top = 0;
 
         // Libérer les ressources de currentWord pour éviter les fuites
-        if (currentenv->currentWord.name) {
-            free(currentenv->currentWord.name);
-            currentenv->currentWord.name = NULL;
+        if (env->currentWord.name) {
+            free(env->currentWord.name);
+            env->currentWord.name = NULL;
         }
-        for (int j = 0; j < currentenv->currentWord.string_count; j++) {
-            if (currentenv->currentWord.strings[j]) {
-                free(currentenv->currentWord.strings[j]);
-                currentenv->currentWord.strings[j] = NULL;
+        for (int j = 0; j < env->currentWord.string_count; j++) {
+            if (env->currentWord.strings[j]) {
+                free(env->currentWord.strings[j]);
+                env->currentWord.strings[j] = NULL;
             }
         }
-        if (currentenv->currentWord.code) {
-            free(currentenv->currentWord.code);
-            currentenv->currentWord.code = NULL;
+        if (env->currentWord.code) {
+            free(env->currentWord.code);
+            env->currentWord.code = NULL;
         }
-        if (currentenv->currentWord.strings) {
-            free(currentenv->currentWord.strings);
-            currentenv->currentWord.strings = NULL;
+        if (env->currentWord.strings) {
+            free(env->currentWord.strings);
+            env->currentWord.strings = NULL;
         }
-        currentenv->currentWord.code_length = 0;
-        currentenv->currentWord.code_capacity = 0;
-        currentenv->currentWord.string_count = 0;
-        currentenv->currentWord.string_capacity = 0;
+        env->currentWord.code_length = 0;
+        env->currentWord.code_capacity = 0;
+        env->currentWord.string_count = 0;
+        env->currentWord.string_capacity = 0;
     }
 }
