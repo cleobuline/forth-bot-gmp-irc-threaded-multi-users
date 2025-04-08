@@ -31,8 +31,4 @@ sudo apt-get install gcc
 - **Génération d’images** : Crée et héberge des images via ImgBB avec la commande `IMAGE`.
 - **Résolution réseau moderne** : Utilise `getaddrinfo` pour une compatibilité IPv4/IPv6.
 
-## Prérequis
-
-Pour compiler et exécuter Dalle, vous devez installer les bibliothèques suivantes :
-
-
+ 
