@@ -10,6 +10,19 @@ nohup ./forth name_of_irc_server bot_name "#channel"
 
 gcc -o forth -O3 -Wall -flto main.c memory_forth.c executeinstruction.c compiletoken.c images.c dictionnary.c env.c utils.c irc.c interpret.c -lgmp -lcurl
 
+Vérifiez que GCC est installé :
+```bash
+sudo apt-get install gcc
+
+### Dépendances
+- **GMP (GNU Multiple Precision Arithmetic Library)** : Pour les calculs sur grands nombres.
+  - Ubuntu : `sudo apt-get install libgmp-dev`
+- **libcurl** : Pour les requêtes HTTP (ex. ImgBB).
+  - Ubuntu : `sudo apt-get install libcurl4-openssl-dev`
+- **Bibliothèques standard C** : Inclues dans `libc6-dev` (généralement déjà installé).
+  - Ubuntu : `sudo apt-get install libc6-dev`
+  - 
+ 
 ## Fonctionnalités
 
 - **Interpréteur Forth** : Exécute des commandes Forth comme `WORDS`, `5 3 +`, `NUM-TO-BIN`, ou `"monster" IMAGE`.
@@ -22,18 +35,4 @@ gcc -o forth -O3 -Wall -flto main.c memory_forth.c executeinstruction.c compilet
 
 Pour compiler et exécuter Dalle, vous devez installer les bibliothèques suivantes :
 
-### Dépendances
-- **GMP (GNU Multiple Precision Arithmetic Library)** : Pour les calculs sur grands nombres.
-  - Ubuntu : `sudo apt-get install libgmp-dev`
-- **libcurl** : Pour les requêtes HTTP (ex. ImgBB).
-  - Ubuntu : `sudo apt-get install libcurl4-openssl-dev`
-- **Bibliothèques standard C** : Inclues dans `libc6-dev` (généralement déjà installé).
-  - Ubuntu : `sudo apt-get install libc6-dev`
-  - 
-compilation
 
-gcc -o forth -O3 -Wall -flto main.c memory_forth.c executeinstruction.c compiletoken.c images.c dictionnary.c env.c utils.c irc.c interpret.c -lgmp -lcurl
-
-Vérifiez que GCC est installé :
-```bash
-sudo apt-get install gcc
