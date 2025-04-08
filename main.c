@@ -270,15 +270,15 @@ int main(int argc, char *argv[]) {
 							    while (head) {
 							        Env *temp = head;
 							        head = head->next;
-							        char msg[512];
-							        snprintf(msg, sizeof(msg), "Freeing environment for %s", temp->nick);
- 							       send_to_channel(msg);
+							        //char msg[512];
+							        //snprintf(msg, sizeof(msg), "Freeing environment for %s", temp->nick);
+ 							       //send_to_channel(msg);
  							       freeEnv(temp->nick);
  							       env_count++;
  							   }
- 							   char final_msg[512];
-  							  snprintf(final_msg, sizeof(final_msg), "Freed %d environments", env_count);
-  							  send_to_channel(final_msg);
+ 							   //char final_msg[512];
+  							  //snprintf(final_msg, sizeof(final_msg), "Freed %d environments", env_count);
+  							  //send_to_channel(final_msg);
   						  if (irc_socket != -1) {
   						      close(irc_socket);
   						      irc_socket = -1;
