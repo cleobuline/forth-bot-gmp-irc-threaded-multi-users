@@ -52,28 +52,69 @@ void *interpret_thread(void *arg) {
 }
 
  
- 
  void interpret(char *input, Stack *stack) {
     if (!currentenv) {
         send_to_channel("DEBUG: currentenv is NULL");
         return;
     }
- 
+
     currentenv->error_flag = 0;
     currentenv->compile_error = 0;
+
     char *saveptr;
     char *token = strtok_r(input, " \t\n", &saveptr);
     while (token && !currentenv->error_flag && !currentenv->compile_error) {
- 
+        // Ignorer les commentaires Forth (entre parenthèses)
         if (strcmp(token, "(") == 0) {
             char *end = strstr(saveptr, ")");
-            if (end) saveptr = end + 1;
-            else saveptr = NULL;
+            if (end) {
+                saveptr = end + 1;
+            } else {
+                saveptr = NULL;  // Fin du commentaire non trouvée, on arrête
+            }
             token = strtok_r(NULL, " \t\n", &saveptr);
             continue;
         }
+
+        // Compiler ou interpréter le token
         compileToken(token, &saveptr, currentenv);
+
+        // Si saveptr est NULL, on a fini de parser
         if (!saveptr) break;
+
+        // Passer au token suivant
         token = strtok_r(NULL, " \t\n", &saveptr);
+    }
+
+    // Si on est en mode compilation et qu’il reste des structures de contrôle non terminées
+    if (currentenv->compiling && currentenv->control_stack_top > 0) {
+        set_error("Incomplete definition: unmatched control structures");
+        currentenv->compile_error = 1;
+        currentenv->compiling = 0;
+        currentenv->control_stack_top = 0;
+
+        // Libérer les ressources de currentWord pour éviter les fuites
+        if (currentenv->currentWord.name) {
+            free(currentenv->currentWord.name);
+            currentenv->currentWord.name = NULL;
+        }
+        for (int j = 0; j < currentenv->currentWord.string_count; j++) {
+            if (currentenv->currentWord.strings[j]) {
+                free(currentenv->currentWord.strings[j]);
+                currentenv->currentWord.strings[j] = NULL;
+            }
+        }
+        if (currentenv->currentWord.code) {
+            free(currentenv->currentWord.code);
+            currentenv->currentWord.code = NULL;
+        }
+        if (currentenv->currentWord.strings) {
+            free(currentenv->currentWord.strings);
+            currentenv->currentWord.strings = NULL;
+        }
+        currentenv->currentWord.code_length = 0;
+        currentenv->currentWord.code_capacity = 0;
+        currentenv->currentWord.string_count = 0;
+        currentenv->currentWord.string_capacity = 0;
     }
 }
