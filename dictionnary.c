@@ -14,6 +14,38 @@
 #include "memory_forth.h"
 #include "forth_bot.h"
 
+
+void initDynamicDictionary(DynamicDictionary *dict) {
+    dict->capacity = 128;  // Plus grand pour éviter les redimensionnements précoces
+    dict->count = 0;
+    dict->words = (CompiledWord *)calloc(dict->capacity, sizeof(CompiledWord));
+    if (!dict->words) {
+        send_to_channel("Erreur : Échec de l’allocation du dictionnaire");
+        exit(1);
+    }
+
+    for (long int i = 0; i < dict->capacity; i++) {
+        dict->words[i].name = NULL;
+        dict->words[i].code_length = 0;
+        dict->words[i].code_capacity = 16;
+        dict->words[i].code = (Instruction *)calloc(dict->words[i].code_capacity, sizeof(Instruction));
+        dict->words[i].string_count = 0;
+        dict->words[i].string_capacity = 16;
+        dict->words[i].strings = (char **)calloc(dict->words[i].string_capacity, sizeof(char *));
+        dict->words[i].immediate = 0;
+
+        if (!dict->words[i].code || !dict->words[i].strings) {
+            send_to_channel("Erreur : Échec de l’initialisation des tableaux dans CompiledWord");
+            for (long int j = 0; j < i; j++) {
+                free(dict->words[j].code);
+                free(dict->words[j].strings);
+            }
+            free(dict->words);
+            exit(1);
+        }
+    }
+}
+/* 
 void initDynamicDictionary(DynamicDictionary *dict) {
     dict->capacity = 16;
     dict->count = 0;
@@ -44,7 +76,9 @@ void initDynamicDictionary(DynamicDictionary *dict) {
         }
     }
 }
-
+ 
+*/ 
+ 
 void resizeCompiledWordArrays(CompiledWord *word, int is_code) {
     if (is_code) {
         long int new_capacity = word->code_capacity * 2;
@@ -68,17 +102,16 @@ void resizeCompiledWordArrays(CompiledWord *word, int is_code) {
         word->string_capacity = new_capacity;
     }
 }
-
+ 
 void resizeDynamicDictionary(DynamicDictionary *dict) {
     long int new_capacity = dict->capacity * 2;
     CompiledWord *new_words = (CompiledWord *)realloc(dict->words, new_capacity * sizeof(CompiledWord));
     if (!new_words) {
-        send_to_channel("Erreur : Échec du redimensionnement du dictionnaire");
-        exit(1);
+        send_to_channel("Error: Failed to resize dictionary, operation aborted try to FORGET somme WORDS ");
+        return;  // Ne pas exit, juste abandonner le redimensionnement
     }
     dict->words = new_words;
 
-    // Initialiser uniquement les nouvelles entrées
     for (long int i = dict->count; i < new_capacity; i++) {
         dict->words[i].name = NULL;
         dict->words[i].code_length = 0;
@@ -90,20 +123,19 @@ void resizeDynamicDictionary(DynamicDictionary *dict) {
         dict->words[i].immediate = 0;
 
         if (!dict->words[i].code || !dict->words[i].strings) {
-            send_to_channel("Erreur : Échec de l’allocation dans resizeDynamicDictionary");
-            for (long int j = 0; j < i; j++) {
-                if (j >= dict->count) { // Ne libérer que les nouvelles entrées
-                    free(dict->words[j].code);
-                    free(dict->words[j].strings);
-                }
+            send_to_channel("Error: Failed to allocate arrays in resizeDynamicDictionary ");
+            for (long int j = dict->count; j < i; j++) {
+                free(dict->words[j].code);
+                free(dict->words[j].strings);
             }
-            free(dict->words);
-            exit(1);
+            return;  // Abandonne sans exit
         }
     }
     dict->capacity = new_capacity;
 }
-
+ 
+ 
+/*
 void addWord(DynamicDictionary *dict, const char *name, OpCode opcode, int immediate) {
     if (dict->count >= dict->capacity) {
         resizeDynamicDictionary(dict);
@@ -140,24 +172,58 @@ void addWord(DynamicDictionary *dict, const char *name, OpCode opcode, int immed
     }
     dict->count++;
 }
+*/ 
+void addWord(DynamicDictionary *dict, const char *name, OpCode opcode, int immediate) {
+    if (dict->count >= dict->capacity) {
+        resizeDynamicDictionary(dict);
+    }
+    CompiledWord *word = &dict->words[dict->count];
 
-int findCompiledWordIndex(char *name) {
-    if (!currentenv) return -1;
-    for (long int i = 0; i < currentenv->dictionary.count; i++) {
-        if (currentenv->dictionary.words[i].name && strcmp(currentenv->dictionary.words[i].name, name) == 0) {
+    if (word->name) free(word->name);
+    if (word->code) free(word->code);
+    if (word->strings) {
+        for (int j = 0; j < word->string_count; j++) {
+            if (word->strings[j]) free(word->strings[j]);
+        }
+        free(word->strings);
+    }
+
+    word->name = strdup(name);
+    word->code_capacity = 16;
+    word->code = (Instruction *)calloc(word->code_capacity, sizeof(Instruction));
+    word->code[0].opcode = opcode;
+    word->code_length = 1;
+    word->string_capacity = 16;
+    word->strings = (char **)calloc(word->string_capacity, sizeof(char *));
+    word->string_count = 0;
+    word->immediate = immediate;
+
+    if (!word->name || !word->code || !word->strings) {
+        send_to_channel("Erreur : Échec de l’allocation dans addWord");
+        if (word->name) free(word->name);
+        if (word->code) free(word->code);
+        if (word->strings) free(word->strings);
+        return;
+    }
+    dict->count++;
+}
+int findCompiledWordIndex(char *name, Env *env) {
+    if (!env) return -1;
+    for (long int i = 0; i < env->dictionary.count; i++) {
+        if (env->dictionary.words[i].name && strcmp(env->dictionary.words[i].name, name) == 0) {
             return i;
         }
     }
     return -1;
 }
 
-void print_word_definition_irc(int index, Stack *stack) {
-    if (!currentenv || index < 0 || index >= currentenv->dictionary.count) {
+void print_word_definition_irc(int index, Stack *stack, Env *env) {
+    if (!env || index < 0 || index >= env->dictionary.count) {
         send_to_channel("SEE: Unknown word");
         return;
     }
 
-    CompiledWord *word = &currentenv->dictionary.words[index];
+    CompiledWord *word = &env->dictionary.words[index];
     char def_msg[512] = "";
     snprintf(def_msg, sizeof(def_msg), ": %s ", word->name);
 
@@ -182,8 +248,8 @@ void print_word_definition_irc(int index, Stack *stack) {
                 }
                 break;
             case OP_CALL:
-                if (instr.operand < currentenv->dictionary.count && currentenv->dictionary.words[instr.operand].name) {
-                    snprintf(instr_str, sizeof(instr_str), "%s ", currentenv->dictionary.words[instr.operand].name);
+                if (instr.operand < env->dictionary.count && env->dictionary.words[instr.operand].name) {
+                    snprintf(instr_str, sizeof(instr_str), "%s ", env->dictionary.words[instr.operand].name);
                 } else {
                     snprintf(instr_str, sizeof(instr_str), "(CALL %ld) ", instr.operand);
                 }
@@ -433,6 +499,7 @@ void initDictionary(Env *env) {
     addWord(&env->dictionary, "WHILE", OP_WHILE, 0);
     addWord(&env->dictionary, "REPEAT", OP_REPEAT, 0);
     addWord(&env->dictionary, "AGAIN", OP_AGAIN, 0);
+    // addWord(&env->dictionary, "RECURSE", OP_CALL, 1);
     addWord(&env->dictionary, "SQRT", OP_SQRT, 0);
     addWord(&env->dictionary, "UNLOOP", OP_UNLOOP, 0);
     addWord(&env->dictionary, "+LOOP", OP_PLUS_LOOP, 0);
