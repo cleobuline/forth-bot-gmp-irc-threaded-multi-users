@@ -97,7 +97,9 @@ typedef enum {
     OP_CLEAR_STRINGS,
     OP_DELAY,
     OP_RECURSE,
-    OP_CONSTANT
+    OP_CONSTANT,
+    OP_MICRO,
+    OP_MILLI
 } OpCode;
 typedef struct {
     OpCode opcode;
@@ -107,10 +109,12 @@ typedef struct {
 // Définir CompiledWord avant DynamicDictionary
 typedef struct {
     char *name;
-    Instruction code[WORD_CODE_SIZE];
-    long int code_length;
-    char *strings[WORD_CODE_SIZE];
-    long int string_count;
+    Instruction *code;         // Pointeur vers un tableau d'instructions
+    long int code_length;      // Nombre d'instructions utilisées
+    long int code_capacity;    // Capacité allouée pour le tableau code
+    char **strings;            // Pointeur vers un tableau de chaînes
+    long int string_count;     // Nombre de chaînes utilisées
+    long int string_capacity;  // Capacité allouée pour le tableau strings
     int immediate;
 } CompiledWord;
 
@@ -205,6 +209,7 @@ void print_word_definition_irc(int index, Stack *stack);
 int findCompiledWordIndex(char *name) ;
 void resizeDynamicDictionary(DynamicDictionary *dict);
 void initDynamicDictionary(DynamicDictionary *dict);
+void resizeCompiledWordArrays(CompiledWord *word, int is_code) ;
 void initDictionary(Env *env);
 void initEnv(Env *env, const char *nick) ;
 Env *createEnv(const char *nick);
