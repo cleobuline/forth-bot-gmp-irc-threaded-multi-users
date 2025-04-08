@@ -176,7 +176,7 @@ typedef struct Env {
     Stack return_stack;
     LoopEntry loop_stack[LOOP_STACK_SIZE];
     int loop_stack_top;
-    DynamicDictionary dictionary; // Remplace CompiledWord dictionary[DICT_SIZE]
+    DynamicDictionary dictionary;
     MemoryList memory_list;
     char output_buffer[BUFFER_SIZE];
     int buffer_pos;
@@ -192,24 +192,31 @@ typedef struct Env {
     char emit_buffer[512];
     int emit_buffer_pos;
     struct Env *next;
-    int in_use;  // Ajouté : 1 si utilisé par interpret_thread, 0 sinon
+    Command queue[QUEUE_SIZE];
+    int queue_head;
+    int queue_tail;
+    pthread_mutex_t queue_mutex;
+    pthread_t thread;
+    pthread_cond_t queue_cond;  // Nouvelle condition pour la file
+    pthread_mutex_t in_use_mutex;  // Mutex pour protéger in_use
+    int in_use;
+    int thread_running ; 
+    mpz_t mpz_pool[MPZ_POOL_SIZE]; // Ajouté ici
 } Env;
 
-void executeCompiledWord(CompiledWord *word, Stack *stack, int word_index);
-void executeInstruction(Instruction instr, Stack *stack, long int *ip, CompiledWord *word, int word_index);
-void interpret(char *input, Stack *stack);
+void executeInstruction(Instruction instr, Stack *stack, long int *ip, CompiledWord *word, int word_index, Env *env);
+void executeCompiledWord(CompiledWord *word, Stack *stack, int word_index, Env *env);
 void compileToken(char *token, char **input_rest, Env *env);
+void interpret(char *input, Stack *stack, Env *env);
+
 void send_to_channel(const char *msg) ;
-void push(Stack *stack, mpz_t value);
-void pop(Stack *stack, mpz_t result) ;
-void push_string(char *str);
-char *pop_string();
-void set_error(const char *msg);
-void print_word_definition_irc(int index, Stack *stack);
-int findCompiledWordIndex(char *name) ;
+ 
+void print_word_definition_irc(int index, Stack *stack, Env *env);
+int findCompiledWordIndex(char *name, Env *env);
 void resizeDynamicDictionary(DynamicDictionary *dict);
 void initDynamicDictionary(DynamicDictionary *dict);
 void resizeCompiledWordArrays(CompiledWord *word, int is_code) ;
+ 
 void initDictionary(Env *env);
 void initEnv(Env *env, const char *nick) ;
 Env *createEnv(const char *nick);
@@ -220,20 +227,22 @@ char *generate_image_tiny(const char *prompt) ;
 size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp);
 size_t write_binary_callback(void *contents, size_t size, size_t nmemb, void *userp);
 
-void push(Stack *stack, mpz_t value);
-void pop(Stack *stack, mpz_t result);
-void push_string(char *str);
-char *pop_string() ;
-void set_error(const char *msg);
+void push(Env *env, mpz_t value);
+void pop(Env *env, mpz_t result);
+void push_string(Env *env, char *str);
+char *pop_string(Env *env) ;
+void set_error(Env *env, const char *msg);
+
+
 void enqueue(const char *cmd, const char *nick);
 void send_to_channel(const char *msg) ;
 void irc_connect(const char *server_ip, const char *bot_nick);
- void interpret(char *input, Stack *stack);
- void *interpret_thread(void *arg);
+ 
+void *env_interpret_thread(void *arg);
  void enqueue(const char *cmd, const char *nick);
  Command *dequeue();
  void set_currentenv(Env *env);
-extern Env *head;
+extern Env *head;  // pointeur sur une liste chainée d'environnement 
 extern Env *currentenv;
 extern mpz_t mpz_pool[MPZ_POOL_SIZE];
 extern char *channel;
