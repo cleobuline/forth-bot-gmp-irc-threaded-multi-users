@@ -1,7 +1,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <unistd.h>
+#include <unistd.h>  // Ajouté pour usleep
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,8 +9,8 @@
 #include <time.h>
 #include <ctype.h>
 #include "memory_forth.h"
-#include <netdb.h> 
-#include <curl/curl.h> 
+#include <netdb.h>
+#include <curl/curl.h>
 #include "forth_bot.h"
 
 void executeInstruction(Instruction instr, Stack *stack, long int *ip, CompiledWord *word, int word_index) {
@@ -21,6 +21,7 @@ void executeInstruction(Instruction instr, Stack *stack, long int *ip, CompiledW
 unsigned long encoded_idx;
     unsigned long type;
     MemoryNode *node;
+        struct timeval tv;
     switch (instr.opcode) {
  
 case OP_PUSH:
@@ -704,8 +705,11 @@ case OP_FORGET:
         char *word_to_forget = word->strings[instr.operand];
         int forget_idx = findCompiledWordIndex(word_to_forget);
         if (forget_idx >= 0) {
+            // Parcourir tous les mots à partir de forget_idx jusqu’à la fin du dictionnaire
             for (int i = forget_idx; i < currentenv->dictionary.count; i++) {
                 CompiledWord *dict_word = &currentenv->dictionary.words[i];
+
+                // Vérifier si le mot est une variable, une chaîne ou un tableau et libérer la mémoire associée
                 if (dict_word->code_length == 1 && dict_word->code[0].opcode == OP_PUSH) {
                     unsigned long encoded_idx = dict_word->code[0].operand;
                     unsigned long type = memory_get_type(encoded_idx);
@@ -713,21 +717,44 @@ case OP_FORGET:
                         memory_free(&currentenv->memory_list, dict_word->name);
                     }
                 }
+
+                // Libérer le nom du mot
                 if (dict_word->name) {
                     free(dict_word->name);
                     dict_word->name = NULL;
                 }
+
+                // Libérer toutes les chaînes dans le tableau strings
                 for (int j = 0; j < dict_word->string_count; j++) {
                     if (dict_word->strings[j]) {
                         free(dict_word->strings[j]);
                         dict_word->strings[j] = NULL;
                     }
                 }
+
+                // Libérer les tableaux dynamiques code et strings
+                if (dict_word->code) {
+                    free(dict_word->code);
+                    dict_word->code = NULL;
+                }
+                if (dict_word->strings) {
+                    free(dict_word->strings);
+                    dict_word->strings = NULL;
+                }
+
+                // Réinitialiser les compteurs et capacités
                 dict_word->code_length = 0;
+                dict_word->code_capacity = 0;
                 dict_word->string_count = 0;
+                dict_word->string_capacity = 0;
+                dict_word->immediate = 0;
             }
+
+            // Mettre à jour le nombre de mots dans le dictionnaire
             long int old_dict_count = currentenv->dictionary.count;
             currentenv->dictionary.count = forget_idx;
+
+            // Envoyer un message de confirmation
             char msg[512];
             snprintf(msg, sizeof(msg), "Forgot everything from '%s' at index %d (dict was %ld, now %ld; mem count now %lu)", 
                      word_to_forget, forget_idx, old_dict_count, currentenv->dictionary.count, currentenv->memory_list.count);
@@ -1139,7 +1166,18 @@ case OP_DELAY:
     mpz_set_ui(*result, instr.operand);
     push(stack, *result);
     break; 
-    
+    case OP_MICRO:
+
+    gettimeofday(&tv, NULL);
+    mpz_set_si(*result, (long int)(tv.tv_sec * 1000000 + tv.tv_usec)); // Microsecondes
+    push(stack, *result);
+    break;
+    case OP_MILLI:
+
+    gettimeofday(&tv, NULL);
+    mpz_set_si(*result, (long int)(tv.tv_sec * 1000 + tv.tv_usec / 1000)); // Millisecondes
+    push(stack, *result);
+    break;
         default:
             set_error("Unknown opcode");
             break;
