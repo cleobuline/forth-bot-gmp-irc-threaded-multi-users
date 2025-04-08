@@ -9,9 +9,32 @@
 #include <time.h>
 #include <ctype.h>
 #include "memory_forth.h"
-#include <netdb.h> 
-#include <curl/curl.h> 
+#include <netdb.h>
+#include <curl/curl.h>
 #include "forth_bot.h"
+
+// Fonctions utilitaires pour redimensionner les tableaux dynamiques
+static void resizeCodeArray(CompiledWord *word) {
+    long int new_capacity = word->code_capacity ? word->code_capacity * 2 : 1;
+    Instruction *new_code = (Instruction *)realloc(word->code, new_capacity * sizeof(Instruction));
+    if (!new_code) {
+        set_error("Failed to resize code array");
+        return;
+    }
+    word->code = new_code;
+    word->code_capacity = new_capacity;
+}
+
+static void resizeStringArray(CompiledWord *word) {
+    long int new_capacity = word->string_capacity ? word->string_capacity * 2 : 1;
+    char **new_strings = (char **)realloc(word->strings, new_capacity * sizeof(char *));
+    if (!new_strings) {
+        set_error("Failed to resize string array");
+        return;
+    }
+    word->strings = new_strings;
+    word->string_capacity = new_capacity;
+}
 
 void executeCompiledWord(CompiledWord *word, Stack *stack, int word_index) {
     long int ip = 0;
@@ -20,11 +43,12 @@ void executeCompiledWord(CompiledWord *word, Stack *stack, int word_index) {
         ip++;
     }
 }
+
 void compileToken(char *token, char **input_rest, Env *env) {
     Instruction instr = {0};
     if (!env || env->compile_error) return;
 
-    // Mots immédiats (exécutés même en mode compilation)
+    // Mots immédiats
     int idx = findCompiledWordIndex(token);
     if (idx >= 0 && env->dictionary.words[idx].immediate) {
         if (strcmp(token, "STRING") == 0) {
@@ -50,15 +74,25 @@ void compileToken(char *token, char **input_rest, Env *env) {
             if (env->dictionary.count >= env->dictionary.capacity) resizeDynamicDictionary(&env->dictionary);
             int dict_idx = env->dictionary.count++;
             env->dictionary.words[dict_idx].name = strdup(next_token);
+            env->dictionary.words[dict_idx].code = (Instruction *)malloc(sizeof(Instruction));
+            env->dictionary.words[dict_idx].code_capacity = 1;
             env->dictionary.words[dict_idx].code[0].opcode = OP_PUSH;
             env->dictionary.words[dict_idx].code[0].operand = index;
             env->dictionary.words[dict_idx].code_length = 1;
+            env->dictionary.words[dict_idx].strings = (char **)malloc(sizeof(char *));
+            env->dictionary.words[dict_idx].string_capacity = 1;
             env->dictionary.words[dict_idx].string_count = 0;
             env->dictionary.words[dict_idx].immediate = 0;
             if (env->compiling) {
                 instr.opcode = OP_STRING;
                 instr.operand = env->currentWord.string_count;
+                if (env->currentWord.string_count >= env->currentWord.string_capacity) {
+                    resizeStringArray(&env->currentWord);
+                }
                 env->currentWord.strings[env->currentWord.string_count++] = strdup(next_token);
+                if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+                    resizeCodeArray(&env->currentWord);
+                }
                 env->currentWord.code[env->currentWord.code_length++] = instr;
             }
         } else if (strcmp(token, "FORGET") == 0) {
@@ -69,15 +103,18 @@ void compileToken(char *token, char **input_rest, Env *env) {
                 return;
             }
             CompiledWord temp_word = {0};
+            temp_word.strings = (char **)malloc(sizeof(char *));
+            temp_word.string_capacity = 1;
             temp_word.strings[0] = strdup(next_token);
             temp_word.string_count = 1;
             instr.opcode = OP_FORGET;
             instr.operand = 0;
             executeInstruction(instr, &env->main_stack, NULL, &temp_word, -1);
             free(temp_word.strings[0]);
+            free(temp_word.strings);
             return;
         }
-        return; // Sortir après un mot immédiat
+        return;
     }
 
     // Début d’une définition
@@ -92,21 +129,33 @@ void compileToken(char *token, char **input_rest, Env *env) {
         int existing_idx = findCompiledWordIndex(next_token);
         if (existing_idx >= 0) {
             env->current_word_index = existing_idx;
-            if (env->dictionary.words[existing_idx].name) free(env->dictionary.words[existing_idx].name);
-            for (int j = 0; j < env->dictionary.words[existing_idx].string_count; j++) {
-                if (env->dictionary.words[existing_idx].strings[j]) free(env->dictionary.words[existing_idx].strings[j]);
+            CompiledWord *word = &env->dictionary.words[existing_idx];
+            if (word->name) free(word->name);
+            if (word->code) free(word->code);
+            for (int j = 0; j < word->string_count; j++) {
+                if (word->strings[j]) free(word->strings[j]);
             }
-            env->dictionary.words[existing_idx].name = NULL;
-            env->dictionary.words[existing_idx].code_length = 0;
-            env->dictionary.words[existing_idx].string_count = 0;
+            if (word->strings) free(word->strings);
+            word->name = NULL;
+            word->code = NULL;
+            word->code_length = 0;
+            word->code_capacity = 0;
+            word->strings = NULL;
+            word->string_count = 0;
+            word->string_capacity = 0;
         } else {
             env->current_word_index = env->dictionary.count;
             if (env->dictionary.count >= env->dictionary.capacity) resizeDynamicDictionary(&env->dictionary);
             env->dictionary.count++;
         }
         env->currentWord.name = strdup(next_token);
+        env->currentWord.code = (Instruction *)malloc(sizeof(Instruction));
+        env->currentWord.code_capacity = 1;
         env->currentWord.code_length = 0;
+        env->currentWord.strings = (char **)malloc(sizeof(char *));
+        env->currentWord.string_capacity = 1;
         env->currentWord.string_count = 0;
+        env->currentWord.immediate = 0;
         env->control_stack_top = 0;
         return;
     }
@@ -126,24 +175,54 @@ void compileToken(char *token, char **input_rest, Env *env) {
             return;
         }
         instr.opcode = OP_END;
+        if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+            resizeCodeArray(&env->currentWord);
+        }
         env->currentWord.code[env->currentWord.code_length++] = instr;
+        
         if (env->current_word_index >= 0 && env->current_word_index < env->dictionary.capacity) {
-            env->dictionary.words[env->current_word_index] = env->currentWord;
-            if (env->current_word_index == env->dictionary.count) env->dictionary.count++;
+            CompiledWord *dict_word = &env->dictionary.words[env->current_word_index];
+            if (dict_word->name) free(dict_word->name);
+            if (dict_word->code) free(dict_word->code);
+            for (int j = 0; j < dict_word->string_count; j++) {
+                if (dict_word->strings[j]) free(dict_word->strings[j]);
+            }
+            if (dict_word->strings) free(dict_word->strings);
+            
+            dict_word->name = env->currentWord.name;
+            dict_word->code = env->currentWord.code;
+            dict_word->code_length = env->currentWord.code_length;
+            dict_word->code_capacity = env->currentWord.code_capacity;
+            dict_word->strings = env->currentWord.strings;
+            dict_word->string_count = env->currentWord.string_count;
+            dict_word->string_capacity = env->currentWord.string_capacity;
+            dict_word->immediate = env->currentWord.immediate;
         } else {
             set_error("Dictionary index out of bounds");
             env->compile_error = 1;
+            if (env->currentWord.name) free(env->currentWord.name);
+            if (env->currentWord.code) free(env->currentWord.code);
+            for (int j = 0; j < env->currentWord.string_count; j++) {
+                if (env->currentWord.strings[j]) free(env->currentWord.strings[j]);
+            }
+            if (env->currentWord.strings) free(env->currentWord.strings);
         }
+        
         env->compiling = 0;
         env->compile_error = 0;
         env->control_stack_top = 0;
         env->currentWord.name = NULL;
+        env->currentWord.code = NULL;
         env->currentWord.code_length = 0;
+        env->currentWord.code_capacity = 0;
+        env->currentWord.strings = NULL;
         env->currentWord.string_count = 0;
+        env->currentWord.string_capacity = 0;
+        env->currentWord.immediate = 0;
         return;
     }
 
-    // Récursion dans une définition
+    // Récursion
     if (strcmp(token, "RECURSE") == 0) {
         if (!env->compiling) {
             set_error("RECURSE outside definition");
@@ -152,6 +231,9 @@ void compileToken(char *token, char **input_rest, Env *env) {
         }
         instr.opcode = OP_CALL;
         instr.operand = env->current_word_index;
+        if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+            resizeCodeArray(&env->currentWord);
+        }
         env->currentWord.code[env->currentWord.code_length++] = instr;
         return;
     }
@@ -176,7 +258,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
         return;
     }
 
-    // Mode compilation : construire le mot
+    // Mode compilation
     if (env->compiling) {
         if (strcmp(token, "DUP") == 0) instr.opcode = OP_DUP;
         else if (strcmp(token, "DROP") == 0) instr.opcode = OP_DROP;
@@ -215,6 +297,9 @@ void compileToken(char *token, char **input_rest, Env *env) {
             instr.opcode = OP_DO;
             instr.operand = 0;
             env->control_stack[env->control_stack_top++] = (ControlEntry){CT_DO, env->currentWord.code_length};
+            if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+                resizeCodeArray(&env->currentWord);
+            }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
         }
@@ -227,6 +312,9 @@ void compileToken(char *token, char **input_rest, Env *env) {
             ControlEntry do_entry = env->control_stack[--env->control_stack_top];
             instr.opcode = OP_LOOP;
             instr.operand = do_entry.addr + 1;
+            if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+                resizeCodeArray(&env->currentWord);
+            }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
         }
@@ -239,6 +327,9 @@ void compileToken(char *token, char **input_rest, Env *env) {
             ControlEntry do_entry = env->control_stack[--env->control_stack_top];
             instr.opcode = OP_PLUS_LOOP;
             instr.operand = do_entry.addr + 1;
+            if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+                resizeCodeArray(&env->currentWord);
+            }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
         }
@@ -265,11 +356,24 @@ void compileToken(char *token, char **input_rest, Env *env) {
             }
             long int len = end - start;
             char *str = malloc(len + 1);
+            if (!str) {
+                set_error("Memory allocation failed for string");
+                env->compile_error = 1;
+                return;
+            }
             strncpy(str, start, len);
             str[len] = '\0';
             instr.opcode = OP_DOT_QUOTE;
             instr.operand = env->currentWord.string_count;
-            env->currentWord.strings[env->currentWord.string_count++] = str;
+            // Vérifier et redimensionner avant d'ajouter
+            if (env->currentWord.string_count >= env->currentWord.string_capacity) {
+                resizeStringArray(&env->currentWord);
+            }
+            env->currentWord.strings[env->currentWord.string_count] = str; // Assigner directement
+            env->currentWord.string_count++;
+            if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+                resizeCodeArray(&env->currentWord);
+            }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             *input_rest = end + 1;
             while (**input_rest == ' ' || **input_rest == '\t') (*input_rest)++;
@@ -292,22 +396,32 @@ void compileToken(char *token, char **input_rest, Env *env) {
             if (existing_idx >= 0) {
                 CompiledWord *word = &env->dictionary.words[existing_idx];
                 if (word->name) free(word->name);
+                if (word->code) free(word->code);
                 for (int j = 0; j < word->string_count; j++) {
                     if (word->strings[j]) free(word->strings[j]);
                 }
+                if (word->strings) free(word->strings);
                 word->name = strdup(next_token);
+                word->code = (Instruction *)malloc(sizeof(Instruction));
+                word->code_capacity = 1;
                 word->code[0].opcode = OP_PUSH;
                 word->code[0].operand = encoded_index;
                 word->code_length = 1;
+                word->strings = (char **)malloc(sizeof(char *));
+                word->string_capacity = 1;
                 word->string_count = 0;
                 word->immediate = 0;
             } else {
                 if (env->dictionary.count >= env->dictionary.capacity) resizeDynamicDictionary(&env->dictionary);
                 int dict_idx = env->dictionary.count++;
                 env->dictionary.words[dict_idx].name = strdup(next_token);
+                env->dictionary.words[dict_idx].code = (Instruction *)malloc(sizeof(Instruction));
+                env->dictionary.words[dict_idx].code_capacity = 1;
                 env->dictionary.words[dict_idx].code[0].opcode = OP_PUSH;
                 env->dictionary.words[dict_idx].code[0].operand = encoded_index;
                 env->dictionary.words[dict_idx].code_length = 1;
+                env->dictionary.words[dict_idx].strings = (char **)malloc(sizeof(char *));
+                env->dictionary.words[dict_idx].string_capacity = 1;
                 env->dictionary.words[dict_idx].string_count = 0;
                 env->dictionary.words[dict_idx].immediate = 0;
             }
@@ -331,29 +445,41 @@ void compileToken(char *token, char **input_rest, Env *env) {
             if (existing_idx >= 0) {
                 CompiledWord *word = &env->dictionary.words[existing_idx];
                 if (word->name) free(word->name);
+                if (word->code) free(word->code);
                 for (int j = 0; j < word->string_count; j++) {
                     if (word->strings[j]) free(word->strings[j]);
                 }
+                if (word->strings) free(word->strings);
                 word->name = strdup(next_token);
+                word->code = (Instruction *)malloc(sizeof(Instruction));
+                word->code_capacity = 1;
                 word->code[0].opcode = OP_CONSTANT;
                 word->code[0].operand = mpz_get_ui(value);
                 word->code_length = 1;
+                word->strings = (char **)malloc(sizeof(char *));
+                word->string_capacity = 1;
                 word->string_count = 0;
                 word->immediate = 0;
             } else {
                 if (env->dictionary.count >= env->dictionary.capacity) resizeDynamicDictionary(&env->dictionary);
                 int dict_idx = env->dictionary.count++;
                 env->dictionary.words[dict_idx].name = strdup(next_token);
+                env->dictionary.words[dict_idx].code = (Instruction *)malloc(sizeof(Instruction));
+                env->dictionary.words[dict_idx].code_capacity = 1;
                 env->dictionary.words[dict_idx].code[0].opcode = OP_CONSTANT;
                 env->dictionary.words[dict_idx].code[0].operand = mpz_get_ui(value);
                 env->dictionary.words[dict_idx].code_length = 1;
+                env->dictionary.words[dict_idx].strings = (char **)malloc(sizeof(char *));
+                env->dictionary.words[dict_idx].string_capacity = 1;
                 env->dictionary.words[dict_idx].string_count = 0;
                 env->dictionary.words[dict_idx].immediate = 0;
             }
-            // En mode compilation, ajouter l’instruction
             if (env->compiling) {
                 instr.opcode = OP_CONSTANT;
                 instr.operand = mpz_get_ui(value);
+                if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+                    resizeCodeArray(&env->currentWord);
+                }
                 env->currentWord.code[env->currentWord.code_length++] = instr;
             }
             return;
@@ -372,7 +498,13 @@ void compileToken(char *token, char **input_rest, Env *env) {
             str[len] = '\0';
             instr.opcode = OP_QUOTE;
             instr.operand = env->currentWord.string_count;
+            if (env->currentWord.string_count >= env->currentWord.string_capacity) {
+                resizeStringArray(&env->currentWord);
+            }
             env->currentWord.strings[env->currentWord.string_count++] = str;
+            if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+                resizeCodeArray(&env->currentWord);
+            }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             *input_rest = end + 1;
             while (**input_rest == ' ' || **input_rest == '\t') (*input_rest)++;
@@ -387,6 +519,9 @@ void compileToken(char *token, char **input_rest, Env *env) {
             instr.opcode = OP_BRANCH_FALSE;
             instr.operand = 0;
             env->control_stack[env->control_stack_top++] = (ControlEntry){CT_IF, env->currentWord.code_length};
+            if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+                resizeCodeArray(&env->currentWord);
+            }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
         }
@@ -402,25 +537,33 @@ void compileToken(char *token, char **input_rest, Env *env) {
             instr.operand = 0;
             env->control_stack[env->control_stack_top - 1].type = CT_ELSE;
             env->control_stack[env->control_stack_top - 1].addr = env->currentWord.code_length;
+            if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+                resizeCodeArray(&env->currentWord);
+            }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
         }
-        else if (strcmp(token, "THEN") == 0) {
-            if (env->control_stack_top <= 0) {
-                set_error("THEN without IF or ELSE");
-                env->compile_error = 1;
-                return;
-            }
-            ControlEntry entry = env->control_stack[--env->control_stack_top];
-            if (entry.type == CT_IF || entry.type == CT_ELSE) {
-                env->currentWord.code[entry.addr].operand = env->currentWord.code_length;
-            } else {
-                set_error("Invalid control structure");
-                env->compile_error = 1;
-                return;
-            }
-            return;
+else if (strcmp(token, "THEN") == 0) {
+    if (env->control_stack_top <= 0) {
+        set_error("THEN without IF or ELSE");
+        env->compile_error = 1;
+        return;
+    }
+    ControlEntry entry = env->control_stack[--env->control_stack_top];
+    if (entry.type == CT_IF || entry.type == CT_ELSE) {
+        env->currentWord.code[entry.addr].operand = env->currentWord.code_length + 1; // Cible après OP_END
+        instr.opcode = OP_END;
+        if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+            resizeCodeArray(&env->currentWord);
         }
+        env->currentWord.code[env->currentWord.code_length++] = instr;
+    } else {
+        set_error("Invalid control structure");
+        env->compile_error = 1;
+        return;
+    }
+    return;
+}
         else if (strcmp(token, "BEGIN") == 0) {
             if (env->control_stack_top >= CONTROL_STACK_SIZE) {
                 set_error("Control stack overflow");
@@ -429,6 +572,9 @@ void compileToken(char *token, char **input_rest, Env *env) {
             }
             instr.opcode = OP_BEGIN;
             env->control_stack[env->control_stack_top++] = (ControlEntry){CT_BEGIN, env->currentWord.code_length};
+            if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+                resizeCodeArray(&env->currentWord);
+            }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
         }
@@ -442,6 +588,9 @@ void compileToken(char *token, char **input_rest, Env *env) {
             instr.operand = 0;
             env->control_stack[env->control_stack_top - 1].type = CT_WHILE;
             env->control_stack[env->control_stack_top - 1].addr = env->currentWord.code_length;
+            if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+                resizeCodeArray(&env->currentWord);
+            }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
         }
@@ -455,6 +604,9 @@ void compileToken(char *token, char **input_rest, Env *env) {
             env->currentWord.code[while_entry.addr].operand = env->currentWord.code_length + 1;
             instr.opcode = OP_REPEAT;
             instr.operand = while_entry.addr - 8;
+            if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+                resizeCodeArray(&env->currentWord);
+            }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             env->control_stack_top--;
             return;
@@ -468,6 +620,9 @@ void compileToken(char *token, char **input_rest, Env *env) {
             ControlEntry begin_entry = env->control_stack[--env->control_stack_top];
             instr.opcode = OP_UNTIL;
             instr.operand = begin_entry.addr;
+            if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+                resizeCodeArray(&env->currentWord);
+            }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
         }
@@ -479,6 +634,9 @@ void compileToken(char *token, char **input_rest, Env *env) {
             }
             instr.opcode = OP_CASE;
             env->control_stack[env->control_stack_top++] = (ControlEntry){CT_CASE, env->currentWord.code_length};
+            if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+                resizeCodeArray(&env->currentWord);
+            }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
         }
@@ -498,6 +656,9 @@ void compileToken(char *token, char **input_rest, Env *env) {
             instr.opcode = OP_OF;
             instr.operand = 0;
             env->control_stack[env->control_stack_top++] = (ControlEntry){CT_OF, env->currentWord.code_length};
+            if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+                resizeCodeArray(&env->currentWord);
+            }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
         }
@@ -512,6 +673,9 @@ void compileToken(char *token, char **input_rest, Env *env) {
             instr.opcode = OP_ENDOF;
             instr.operand = 0;
             env->control_stack[env->control_stack_top++] = (ControlEntry){CT_ENDOF, env->currentWord.code_length};
+            if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+                resizeCodeArray(&env->currentWord);
+            }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
         }
@@ -533,6 +697,9 @@ void compileToken(char *token, char **input_rest, Env *env) {
                 return;
             }
             instr.opcode = OP_ENDCASE;
+            if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+                resizeCodeArray(&env->currentWord);
+            }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
         }
@@ -547,6 +714,9 @@ void compileToken(char *token, char **input_rest, Env *env) {
                 if (mpz_set_str(test_num, token, 10) == 0) {
                     instr.opcode = OP_PUSH;
                     instr.operand = env->currentWord.string_count;
+                    if (env->currentWord.string_count >= env->currentWord.string_capacity) {
+                        resizeStringArray(&env->currentWord);
+                    }
                     env->currentWord.strings[env->currentWord.string_count++] = strdup(token);
                 } else {
                     char msg[512];
@@ -558,48 +728,86 @@ void compileToken(char *token, char **input_rest, Env *env) {
                 }
                 mpz_clear(test_num);
             }
-        }
-        if (env->currentWord.code_length < WORD_CODE_SIZE) {
+            if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+                resizeCodeArray(&env->currentWord);
+            }
             env->currentWord.code[env->currentWord.code_length++] = instr;
-        } else {
-            set_error("Word code size exceeded");
-            env->compile_error = 1;
+            return;
         }
+        if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+            resizeCodeArray(&env->currentWord);
+        }
+        env->currentWord.code[env->currentWord.code_length++] = instr;
         return;
     }
 
     // Mode interprétation
     else {
-        if (strcmp(token, "LOAD") == 0) {
-            char *next_token = strtok_r(NULL, "\"", input_rest);
-            if (!next_token || *next_token == '\0') {
-                set_error("LOAD: No filename provided");
-                return;
+       if (strcmp(token, "LOAD") == 0) {
+    char *next_token = strtok_r(NULL, "\"", input_rest);
+    if (!next_token || *next_token == '\0') {
+        set_error("LOAD: No filename provided");
+        return;
+    }
+    while (*next_token == ' ' || *next_token == '\t') next_token++;
+    if (*next_token == '\0') {
+        set_error("LOAD: No filename provided");
+        return;
+    }
+    char filename[512];
+    strncpy(filename, next_token, sizeof(filename) - 1);
+    filename[sizeof(filename) - 1] = '\0';
+    FILE *file = fopen(filename, "r");
+    if (file) {
+        char full_buffer[4096] = ""; // Buffer pour accumuler les lignes
+        char line_buffer[1024];
+        size_t full_len = 0;
+        int compiling = 0;
+
+        while (fgets(line_buffer, sizeof(line_buffer), file)) {
+            line_buffer[strcspn(line_buffer, "\n")] = '\0'; // Enlever \n
+            size_t line_len = strlen(line_buffer);
+
+            // Vérifier si on dépasse la taille du buffer
+            if (full_len + line_len + 1 >= sizeof(full_buffer)) {
+                set_error("LOAD: File too large for buffer");
+                break;
             }
-            while (*next_token == ' ' || *next_token == '\t') next_token++;
-            if (*next_token == '\0') {
-                set_error("LOAD: No filename provided");
-                return;
+
+            // Concaténer la ligne avec un espace
+            if (full_len > 0) {
+                full_buffer[full_len++] = ' ';
             }
-            char filename[512];
-            strncpy(filename, next_token, sizeof(filename) - 1);
-            filename[sizeof(filename) - 1] = '\0';
-            FILE *file = fopen(filename, "r");
-            if (file) {
-                char buffer[1024];
-                while (fgets(buffer, sizeof(buffer), file)) {
-                    buffer[strcspn(buffer, "\n")] = '\0';
-                    interpret(buffer, &env->main_stack);
+            strcpy(full_buffer + full_len, line_buffer);
+            full_len += line_len;
+
+            // Vérifier si la ligne contient un ; pour terminer une définition
+            if (strstr(line_buffer, ";")) {
+                if (!compiling || (compiling && env->control_stack_top == 0)) {
+                    interpret(full_buffer, &env->main_stack);
+                    full_buffer[0] = '\0'; // Réinitialiser le buffer
+                    full_len = 0;
+                    compiling = 0;
                 }
-                fclose(file);
-            } else {
-                char error_msg[1024];
-                snprintf(error_msg, sizeof(error_msg), "Error: LOAD: Cannot open file '%s'", filename);
-                set_error(error_msg);
+            } else if (strstr(line_buffer, ":")) {
+                compiling = 1; // Début d’une définition
             }
-            strtok_r(NULL, " \t\n", input_rest);
-            return;
         }
+
+        // Si reste du buffer non interprété
+        if (full_len > 0) {
+            interpret(full_buffer, &env->main_stack);
+        }
+
+        fclose(file);
+    } else {
+        char error_msg[1024];
+        snprintf(error_msg, sizeof(error_msg), "Error: LOAD: Cannot open file '%s'", filename);
+        set_error(error_msg);
+    }
+    strtok_r(NULL, " \t\n", input_rest);
+    return;
+}
         else if (strcmp(token, "CREATE") == 0) {
             char *next_token = strtok_r(NULL, " \t\n", input_rest);
             if (!next_token) {
@@ -617,13 +825,19 @@ void compileToken(char *token, char **input_rest, Env *env) {
             if (existing_idx >= 0) {
                 CompiledWord *word = &env->dictionary.words[existing_idx];
                 if (word->name) free(word->name);
+                if (word->code) free(word->code);
                 for (int j = 0; j < word->string_count; j++) {
                     if (word->strings[j]) free(word->strings[j]);
                 }
+                if (word->strings) free(word->strings);
                 word->name = strdup(next_token);
+                word->code = (Instruction *)malloc(sizeof(Instruction));
+                word->code_capacity = 1;
                 word->code[0].opcode = OP_PUSH;
                 word->code[0].operand = index;
                 word->code_length = 1;
+                word->strings = (char **)malloc(sizeof(char *));
+                word->string_capacity = 1;
                 word->string_count = 0;
                 word->immediate = 0;
                 MemoryNode *node = memory_get(&env->memory_list, index);
@@ -637,9 +851,13 @@ void compileToken(char *token, char **input_rest, Env *env) {
                 if (env->dictionary.count >= env->dictionary.capacity) resizeDynamicDictionary(&env->dictionary);
                 int dict_idx = env->dictionary.count++;
                 env->dictionary.words[dict_idx].name = strdup(next_token);
+                env->dictionary.words[dict_idx].code = (Instruction *)malloc(sizeof(Instruction));
+                env->dictionary.words[dict_idx].code_capacity = 1;
                 env->dictionary.words[dict_idx].code[0].opcode = OP_PUSH;
                 env->dictionary.words[dict_idx].code[0].operand = index;
                 env->dictionary.words[dict_idx].code_length = 1;
+                env->dictionary.words[dict_idx].strings = (char **)malloc(sizeof(char *));
+                env->dictionary.words[dict_idx].string_capacity = 1;
                 env->dictionary.words[dict_idx].string_count = 0;
                 env->dictionary.words[dict_idx].immediate = 0;
                 MemoryNode *node = memory_get(&env->memory_list, index);
@@ -667,22 +885,32 @@ void compileToken(char *token, char **input_rest, Env *env) {
             if (existing_idx >= 0) {
                 CompiledWord *word = &env->dictionary.words[existing_idx];
                 if (word->name) free(word->name);
+                if (word->code) free(word->code);
                 for (int j = 0; j < word->string_count; j++) {
                     if (word->strings[j]) free(word->strings[j]);
                 }
+                if (word->strings) free(word->strings);
                 word->name = strdup(next_token);
+                word->code = (Instruction *)malloc(sizeof(Instruction));
+                word->code_capacity = 1;
                 word->code[0].opcode = OP_PUSH;
                 word->code[0].operand = encoded_index;
                 word->code_length = 1;
+                word->strings = (char **)malloc(sizeof(char *));
+                word->string_capacity = 1;
                 word->string_count = 0;
                 word->immediate = 0;
             } else {
                 if (env->dictionary.count >= env->dictionary.capacity) resizeDynamicDictionary(&env->dictionary);
                 int dict_idx = env->dictionary.count++;
                 env->dictionary.words[dict_idx].name = strdup(next_token);
+                env->dictionary.words[dict_idx].code = (Instruction *)malloc(sizeof(Instruction));
+                env->dictionary.words[dict_idx].code_capacity = 1;
                 env->dictionary.words[dict_idx].code[0].opcode = OP_PUSH;
                 env->dictionary.words[dict_idx].code[0].operand = encoded_index;
                 env->dictionary.words[dict_idx].code_length = 1;
+                env->dictionary.words[dict_idx].strings = (char **)malloc(sizeof(char *));
+                env->dictionary.words[dict_idx].string_capacity = 1;
                 env->dictionary.words[dict_idx].string_count = 0;
                 env->dictionary.words[dict_idx].immediate = 0;
             }
@@ -718,48 +946,56 @@ void compileToken(char *token, char **input_rest, Env *env) {
             if (next_token) compileToken(next_token, input_rest, env);
             return;
         }
-else if (strcmp(token, "CONSTANT") == 0) {
-     ;
-    char *next_token = strtok_r(NULL, " \t\n", input_rest);
-    if (!next_token) {
-        set_error("CONSTANT requires a name");
-        env->compile_error = 1;
-        return;
-    }
-    if (env->main_stack.top < 0) {
-        set_error("CONSTANT: Stack underflow");
-        env->compile_error = 1;
-        return;
-    }
-    mpz_t value;
-    pop(&env->main_stack, value);
-    int existing_idx = findCompiledWordIndex(next_token);
-    if (existing_idx >= 0) {
-        CompiledWord *word = &env->dictionary.words[existing_idx];
-        if (word->name) free(word->name);
-        for (int j = 0; j < word->string_count; j++) {
-            if (word->strings[j]) free(word->strings[j]);
+        else if (strcmp(token, "CONSTANT") == 0) {
+            char *next_token = strtok_r(NULL, " \t\n", input_rest);
+            if (!next_token) {
+                set_error("CONSTANT requires a name");
+                env->compile_error = 1;
+                return;
+            }
+            if (env->main_stack.top < 0) {
+                set_error("CONSTANT: Stack underflow");
+                env->compile_error = 1;
+                return;
+            }
+            mpz_t value;
+            pop(&env->main_stack, value);
+            int existing_idx = findCompiledWordIndex(next_token);
+            if (existing_idx >= 0) {
+                CompiledWord *word = &env->dictionary.words[existing_idx];
+                if (word->name) free(word->name);
+                if (word->code) free(word->code);
+                for (int j = 0; j < word->string_count; j++) {
+                    if (word->strings[j]) free(word->strings[j]);
+                }
+                if (word->strings) free(word->strings);
+                word->name = strdup(next_token);
+                word->code = (Instruction *)malloc(sizeof(Instruction));
+                word->code_capacity = 1;
+                word->code[0].opcode = OP_CONSTANT;
+                word->code[0].operand = mpz_get_ui(value);
+                word->code_length = 1;
+                word->strings = (char **)malloc(sizeof(char *));
+                word->string_capacity = 1;
+                word->string_count = 0;
+                word->immediate = 0;
+            } else {
+                if (env->dictionary.count >= env->dictionary.capacity) resizeDynamicDictionary(&env->dictionary);
+                int dict_idx = env->dictionary.count++;
+                env->dictionary.words[dict_idx].name = strdup(next_token);
+                env->dictionary.words[dict_idx].code = (Instruction *)malloc(sizeof(Instruction));
+                env->dictionary.words[dict_idx].code_capacity = 1;
+                env->dictionary.words[dict_idx].code[0].opcode = OP_CONSTANT;
+                env->dictionary.words[dict_idx].code[0].operand = mpz_get_ui(value);
+                env->dictionary.words[dict_idx].code_length = 1;
+                env->dictionary.words[dict_idx].strings = (char **)malloc(sizeof(char *));
+                env->dictionary.words[dict_idx].string_capacity = 1;
+                env->dictionary.words[dict_idx].string_count = 0;
+                env->dictionary.words[dict_idx].immediate = 0;
+            }
+            *input_rest = NULL;
+            return;
         }
-        word->name = strdup(next_token);
-        word->code[0].opcode = OP_CONSTANT;
-        word->code[0].operand = mpz_get_ui(value);
-        word->code_length = 1;
-        word->string_count = 0;
-        word->immediate = 0;
-    } else {
-        if (env->dictionary.count >= env->dictionary.capacity) resizeDynamicDictionary(&env->dictionary);
-        int dict_idx = env->dictionary.count++;
-        env->dictionary.words[dict_idx].name = strdup(next_token);
-        env->dictionary.words[dict_idx].code[0].opcode = OP_CONSTANT;
-        env->dictionary.words[dict_idx].code[0].operand = mpz_get_ui(value);
-        env->dictionary.words[dict_idx].code_length = 1;
-        env->dictionary.words[dict_idx].string_count = 0;
-        env->dictionary.words[dict_idx].immediate = 0;
-    }
-     
-    *input_rest = NULL; // Doit arrêter le parsing
-    return;
-}
         else {
             int idx = findCompiledWordIndex(token);
             if (idx >= 0) {
