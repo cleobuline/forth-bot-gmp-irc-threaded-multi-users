@@ -1,3 +1,4 @@
+#include <unistd.h> 
 #include <pthread.h>
 #include "memory_forth.h"
 #include "forth_bot.h"
