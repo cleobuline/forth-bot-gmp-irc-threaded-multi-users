@@ -258,33 +258,30 @@ case OP_CR:
 case OP_VARIABLE:
     if (instr.operand >= 0 && instr.operand < word->string_count && word->strings[instr.operand]) {
         char *name = word->strings[instr.operand];
-        if (findCompiledWordIndex(name,env) >= 0) {
-            char msg[512];
-            snprintf(msg, sizeof(msg), "VARIABLE: '%s' already defined", name);
-            set_error(env,msg);
-        } else {
-            unsigned long index = memory_create(&env->memory_list, name, TYPE_VAR);
-            if (index == 0) {
-                set_error(env,"VARIABLE: Memory creation failed");
-            } else if (env->dictionary.count < env->dictionary.capacity) {
-                int dict_idx = env->dictionary.count++;
-                env->dictionary.words[dict_idx].name = strdup(name);
-                env->dictionary.words[dict_idx].code[0].opcode = OP_PUSH;
-                env->dictionary.words[dict_idx].code[0].operand = index;
-                env->dictionary.words[dict_idx].code_length = 1;
-                env->dictionary.words[dict_idx].string_count = 0;
-            } else {
-                resizeDynamicDictionary(&env->dictionary);
-                int dict_idx = env->dictionary.count++;
-                env->dictionary.words[dict_idx].name = strdup(name);
-                env->dictionary.words[dict_idx].code[0].opcode = OP_PUSH;
-                env->dictionary.words[dict_idx].code[0].operand = index;
-                env->dictionary.words[dict_idx].code_length = 1;
-                env->dictionary.words[dict_idx].string_count = 0;
-            }
+        unsigned long index = memory_create(&env->memory_list, name, TYPE_VAR);
+        if (index == 0) {
+            set_error(env, "VARIABLE: Memory creation failed");
+            break;
         }
+        if (env->dictionary.count >= env->dictionary.capacity) resizeDynamicDictionary(&env->dictionary);
+        int dict_idx = env->dictionary.count++;
+        env->dictionary.words[dict_idx].name = strdup(name);
+        env->dictionary.words[dict_idx].code = malloc(sizeof(Instruction));
+        if (!env->dictionary.words[dict_idx].name || !env->dictionary.words[dict_idx].code) {
+            set_error(env, "VARIABLE: Memory allocation failed");
+            free(env->dictionary.words[dict_idx].name);
+            free(env->dictionary.words[dict_idx].code);
+            break;
+        }
+        env->dictionary.words[dict_idx].code[0].opcode = OP_PUSH;
+        env->dictionary.words[dict_idx].code[0].operand = index;
+        env->dictionary.words[dict_idx].code_length = 1;
+        env->dictionary.words[dict_idx].strings = malloc(sizeof(char *));
+        env->dictionary.words[dict_idx].string_capacity = 1;
+        env->dictionary.words[dict_idx].string_count = 0;
+        env->dictionary.words[dict_idx].immediate = 0;
     } else {
-        set_error(env,"Invalid variable name");
+        set_error(env, "VARIABLE: Invalid name");
     }
     break;
 case OP_STORE:
@@ -593,16 +590,23 @@ case OP_PLUS_LOOP:
                 push(env, *result);
             }
         break ; 
-        /* 
 case OP_DOT_QUOTE:
-    if (instr.operand >= 0 && instr.operand < word->string_count && word->strings[instr.operand]) {
-        send_to_channel(word->strings[instr.operand]);
+    if (instr.operand < word->string_count && word->strings[instr.operand]) {
+        size_t len = strlen(word->strings[instr.operand]);
+        if (env->buffer_pos + len >= BUFFER_SIZE - 1) {
+            send_to_channel(env->output_buffer);
+            env->buffer_pos = 0;
+            memset(env->output_buffer, 0, BUFFER_SIZE);
+        }
+        strncpy(env->output_buffer + env->buffer_pos, word->strings[instr.operand], BUFFER_SIZE - env->buffer_pos - 1);
+        env->buffer_pos += len;
+        env->output_buffer[env->buffer_pos] = '\0';
     } else {
-        set_error(env,"Invalid string index for .\"");
+        set_error(env, "DOT_QUOTE: Invalid string index");
     }
     break;
-    */ 
-    case OP_DOT_QUOTE:
+    /*
+    case OP_DOT_QUOTE: OLD VERSION 
     if (instr.operand < word->string_count && word->strings[instr.operand]) {
         size_t len = strlen(word->strings[instr.operand]);
         if (env->buffer_pos + len < BUFFER_SIZE - 1) {
@@ -616,7 +620,7 @@ case OP_DOT_QUOTE:
         set_error(env,"DOT_QUOTE: Invalid string index");
     }
     break;
- 
+ */
         case OP_CASE:
             if (env->control_stack_top < CONTROL_STACK_SIZE) {
                 env->control_stack[env->control_stack_top].type = CT_CASE;
@@ -794,7 +798,9 @@ case OP_WORDS:
     }
     break;
     
-case OP_LOAD: {
+case OP_LOAD: // NE FONCTIONNE PAS NE FAIT RIEN
+ /*
+ {
     char *filename = NULL;
     if (instr.operand >= 0 && instr.operand < word->string_count && word->strings[instr.operand]) {
         filename = strdup(word->strings[instr.operand]);
@@ -816,9 +822,10 @@ case OP_LOAD: {
         set_error(env,temp_str);
     }
     free(filename);
-    break;
-}
  
+}
+ */ 
+    break;
         case OP_PICK:
             pop(env, *a);
             int n = mpz_get_si(*a);
@@ -1146,6 +1153,7 @@ case OP_IMAGE:
         stack->top = -1;
     }
     break;
+    /*  old version
 case OP_DELAY:
     if (stack->top >= 0) {
         mpz_t delay_ms;
@@ -1156,6 +1164,20 @@ case OP_DELAY:
         mpz_clear(delay_ms);
     } else {
         set_error(env,"DELAY: Stack underflow");
+    }
+    break;
+    */
+    case OP_DELAY:
+    if (stack->top >= 0) {
+        mpz_t delay_ms;
+        mpz_init(delay_ms);
+        pop(env, delay_ms);
+        unsigned long ms = mpz_get_ui(delay_ms);
+        struct timespec ts = {ms / 1000, (ms % 1000) * 1000000};
+        nanosleep(&ts, NULL);
+        mpz_clear(delay_ms);
+    } else {
+        set_error(env, "DELAY: Stack underflow");
     }
     break;
     case OP_RECURSE:  // ne fait rien mais pour être consistant avec la liste des oerateurs
