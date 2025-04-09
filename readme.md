@@ -8,7 +8,7 @@ nohup ./forth name_of_irc_server bot_name "#channel"
 
 ## compilation
 
-gcc -o forth -O3 -Wall -flto main.c memory_forth.c executeinstruction.c compiletoken.c images.c dictionnary.c env.c utils.c irc.c interpret.c -lgmp -lcurl
+gcc -o forth -O3 -Wall -flto main.c memory_forth.c executeinstruction.c compiletoken.c images.c dictionnary.c env.c utils.c irc.c interpret.c -lgmp -lcurl -pthread 
 
 Vérifiez que GCC est installé :
 ```bash
