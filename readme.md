@@ -10,6 +10,8 @@ nohup ./ircforth name_of_irc_server bot_name "#channel"
 
 gcc -o ircforth -O3 -Wall -flto main.c memory_forth.c executeinstruction.c compiletoken.c images.c dictionnary.c env.c utils.c irc.c interpret.c -lgmp -lcurl -pthread 
 
+compile et fonctionne sur ubuntu et MacOS 
+
 Vérifiez que GCC est installé :
 ```bash
 sudo apt-get install gcc
