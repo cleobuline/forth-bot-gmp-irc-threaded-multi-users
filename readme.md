@@ -1,14 +1,14 @@
-# Dalle - IRC Forth Bot
+# ircforth - IRC Forth Bot
 
-Dalle est un bot IRC écrit en C qui interprète des commandes Forth envoyées via un canal IRC. Il prend en charge une variété de commandes Forth, y compris les opérations mathématiques, la manipulation de la pile, la génération d’images, et plus encore. Conçu pour être robuste et performant, Dalle utilise une architecture multi-threadée et une gestion moderne des connexions réseau avec `getaddrinfo`.
+ircforth est un bot IRC écrit en C qui interprète des commandes Forth envoyées via un canal IRC. Il prend en charge une variété de commandes Forth, y compris les opérations mathématiques, la manipulation de la pile, la génération d’images, et plus encore. Conçu pour être robuste et performant, Dalle utilise une architecture multi-threadée et une gestion moderne des connexions réseau avec `getaddrinfo`.
 
 ## Usage
 
-nohup ./forth name_of_irc_server bot_name "#channel"
+nohup ./ircforth name_of_irc_server bot_name "#channel"
 
 ## compilation
 
-gcc -o forth -O3 -Wall -flto main.c memory_forth.c executeinstruction.c compiletoken.c images.c dictionnary.c env.c utils.c irc.c interpret.c -lgmp -lcurl -pthread 
+gcc -o ircforth -O3 -Wall -flto main.c memory_forth.c executeinstruction.c compiletoken.c images.c dictionnary.c env.c utils.c irc.c interpret.c -lgmp -lcurl -pthread 
 
 Vérifiez que GCC est installé :
 ```bash
