@@ -148,6 +148,8 @@ int findCompiledWordIndex(char *name, Env *env) {
     return -1;
 }
 
+// A littke bit complex , but usefull to interact with this forth usage SEE THE_WORD ( print the definition ) 
+
 void print_word_definition_irc(int index, Stack *stack, Env *env) {
     if (!env || index < 0 || index >= env->dictionary.count) {
         send_to_channel("SEE: Unknown word");
