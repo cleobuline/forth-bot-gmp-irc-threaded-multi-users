@@ -28,6 +28,7 @@ sudo apt-get install gcc
 - **Interpréteur Forth** : Exécute des commandes Forth comme `WORDS`, `5 3 +`, `NUM-TO-BIN`, ou `" monster" IMAGE ( need a space after " ) .
 - **Connexion IRC** : Se connecte à un serveur IRC (par défaut `labynet.fr`) et rejoint un canal (par défaut `#labynet`).
 - **Support multi-utilisateur** : Chaque utilisateur a son propre environnement Forth indépendant.
+- multi-threading un threat est initié pour chaque utilisateur ainsi les appels sont non-blocants
 - **Génération d’images** : Crée et héberge des images via ImgBB avec la commande `IMAGE`.
 - **Résolution réseau moderne** : Utilise `getaddrinfo` pour une compatibilité IPv4/IPv6.
 
