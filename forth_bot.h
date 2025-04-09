@@ -1,7 +1,7 @@
 #ifndef FORTH_GLOBALS_H
 #define FORTH_GLOBALS_H
 
-#define STACK_SIZE 1000
+#define STACK_SIZE 500
 #define WORD_CODE_SIZE 512
 #define CONTROL_STACK_SIZE 100
 #define MAX_STRING_SIZE 256
@@ -204,12 +204,24 @@ typedef struct Env {
     mpz_t mpz_pool[MPZ_POOL_SIZE]; // Ajouté ici
 } Env;
 
+struct irc_message {
+    char *prefix;
+    char *command;
+    char **args;
+    int arg_count;
+};
+
+ 
+ 
+ 
+void parse_irc_message(const char *line, struct irc_message *msg);
+void free_irc_message(struct irc_message *msg);
+int irc_handle_message(const char *line, char *bot_nick, int *registered, char *nick_out, char *cmd_out, size_t cmd_out_size) ;
+int irc_receive(char *buffer, size_t buffer_size, size_t *buffer_pos) ;
 void executeInstruction(Instruction instr, Stack *stack, long int *ip, CompiledWord *word, int word_index, Env *env);
 void executeCompiledWord(CompiledWord *word, Stack *stack, int word_index, Env *env);
 void compileToken(char *token, char **input_rest, Env *env);
 void interpret(char *input, Stack *stack, Env *env);
-
-void send_to_channel(const char *msg) ;
  
 void print_word_definition_irc(int index, Stack *stack, Env *env);
 int findCompiledWordIndex(char *name, Env *env);
@@ -218,7 +230,7 @@ void initDynamicDictionary(DynamicDictionary *dict);
 void resizeCompiledWordArrays(CompiledWord *word, int is_code) ;
  
 void initDictionary(Env *env);
-void initEnv(Env *env, const char *nick) ;
+ 
 Env *createEnv(const char *nick);
 void freeEnv(const char *nick);
 Env *findEnv(const char *nick);
@@ -239,12 +251,15 @@ void send_to_channel(const char *msg) ;
 void irc_connect(const char *server_ip, const char *bot_nick);
  
 void *env_interpret_thread(void *arg);
- void enqueue(const char *cmd, const char *nick);
+ 
  Command *dequeue();
- void set_currentenv(Env *env);
-extern Env *head;  // pointeur sur une liste chainée d'environnement 
-extern Env *currentenv;
-extern mpz_t mpz_pool[MPZ_POOL_SIZE];
+ 
+ int irc_receive(char *buffer, size_t buffer_size, size_t *buffer_pos);
+  
+ 
+ extern Env *head;  // pointeur sur une liste chainée d'environnement 
+ 
 extern char *channel;
 extern int irc_socket;
 extern pthread_mutex_t env_mutex;
+extern pthread_mutex_t irc_mutex;
