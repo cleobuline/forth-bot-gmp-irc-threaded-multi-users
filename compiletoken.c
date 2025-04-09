@@ -14,18 +14,18 @@
 #include "forth_bot.h"
 
 // Fonctions utilitaires pour redimensionner les tableaux dynamiques
-static  void resizeCodeArray(CompiledWord *word) {
+static  void resizeCodeArray(Env*env, CompiledWord *word) {
     long int new_capacity = word->code_capacity ? word->code_capacity * 2 : 1;
     Instruction *new_code = (Instruction *)realloc(word->code, new_capacity * sizeof(Instruction));
      if (!new_code) {
-        set_error(env,"Failed to resize code array");
+       set_error(env,"Failed to resize code array");
         return;
     } 
     word->code = new_code;
     word->code_capacity = new_capacity;
 }
 
-static void resizeStringArray(CompiledWord *word) {
+static void resizeStringArray(Env *env,CompiledWord *word) {
     long int new_capacity = word->string_capacity ? word->string_capacity * 2 : 1;
     char **new_strings = (char **)realloc(word->strings, new_capacity * sizeof(char *));
     
@@ -114,11 +114,11 @@ void compileToken(char *token, char **input_rest, Env *env) {
                 instr.opcode = OP_STRING;
                 instr.operand = env->currentWord.string_count;
                 if (env->currentWord.string_count >= env->currentWord.string_capacity) {
-                    resizeStringArray(&env->currentWord);
+                    resizeStringArray(env,&env->currentWord);
                 }
                 env->currentWord.strings[env->currentWord.string_count++] = strdup(next_token);
                 if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-                    resizeCodeArray(&env->currentWord);
+                    resizeCodeArray(env,&env->currentWord);
                 }
                 env->currentWord.code[env->currentWord.code_length++] = instr;
             }
@@ -196,7 +196,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
         }
         instr.opcode = OP_END;
         if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-            resizeCodeArray(&env->currentWord);
+            resizeCodeArray(env , &env->currentWord);
         }
         env->currentWord.code[env->currentWord.code_length++] = instr;
         
@@ -252,7 +252,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
         instr.opcode = OP_CALL;
         instr.operand = env->current_word_index;
         if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-            resizeCodeArray(&env->currentWord);
+            resizeCodeArray(env,&env->currentWord);
         }
         env->currentWord.code[env->currentWord.code_length++] = instr;
         return;
@@ -318,7 +318,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
             instr.operand = 0;
             env->control_stack[env->control_stack_top++] = (ControlEntry){CT_DO, env->currentWord.code_length};
             if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-                resizeCodeArray(&env->currentWord);
+                resizeCodeArray(env,&env->currentWord);
             }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
@@ -333,7 +333,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
             instr.opcode = OP_LOOP;
             instr.operand = do_entry.addr + 1;
             if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-                resizeCodeArray(&env->currentWord);
+                resizeCodeArray(env,&env->currentWord);
             }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
@@ -348,7 +348,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
             instr.opcode = OP_PLUS_LOOP;
             instr.operand = do_entry.addr + 1;
             if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-                resizeCodeArray(&env->currentWord);
+                resizeCodeArray(env ,&env->currentWord);
             }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
@@ -387,12 +387,12 @@ void compileToken(char *token, char **input_rest, Env *env) {
             instr.operand = env->currentWord.string_count;
             // Vérifier et redimensionner avant d'ajouter
             if (env->currentWord.string_count >= env->currentWord.string_capacity) {
-                resizeStringArray(&env->currentWord);
+                resizeStringArray(env,&env->currentWord);
             }
             env->currentWord.strings[env->currentWord.string_count] = str; // Assigner directement
             env->currentWord.string_count++;
             if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-                resizeCodeArray(&env->currentWord);
+                resizeCodeArray(env , &env->currentWord);
             }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             *input_rest = end + 1;
@@ -464,11 +464,11 @@ void compileToken(char *token, char **input_rest, Env *env) {
             instr.opcode = OP_QUOTE;
             instr.operand = env->currentWord.string_count;
             if (env->currentWord.string_count >= env->currentWord.string_capacity) {
-                resizeStringArray(&env->currentWord);
+                resizeStringArray(env,&env->currentWord);
             }
             env->currentWord.strings[env->currentWord.string_count++] = str;
             if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-                resizeCodeArray(&env->currentWord);
+                resizeCodeArray(env , &env->currentWord);
             }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             *input_rest = end + 1;
@@ -485,7 +485,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
             instr.operand = 0;
             env->control_stack[env->control_stack_top++] = (ControlEntry){CT_IF, env->currentWord.code_length};
             if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-                resizeCodeArray(&env->currentWord);
+                resizeCodeArray(env,&env->currentWord);
             }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
@@ -503,7 +503,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
             env->control_stack[env->control_stack_top - 1].type = CT_ELSE;
             env->control_stack[env->control_stack_top - 1].addr = env->currentWord.code_length;
             if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-                resizeCodeArray(&env->currentWord);
+                resizeCodeArray(env,&env->currentWord);
             }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
@@ -519,7 +519,7 @@ else if (strcmp(token, "THEN") == 0) {
         env->currentWord.code[entry.addr].operand = env->currentWord.code_length + 1; // Cible après OP_END
         instr.opcode = OP_END;
         if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-            resizeCodeArray(&env->currentWord);
+            resizeCodeArray(env,&env->currentWord);
         }
         env->currentWord.code[env->currentWord.code_length++] = instr;
     } else {
@@ -538,7 +538,7 @@ else if (strcmp(token, "THEN") == 0) {
             instr.opcode = OP_BEGIN;
             env->control_stack[env->control_stack_top++] = (ControlEntry){CT_BEGIN, env->currentWord.code_length};
             if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-                resizeCodeArray(&env->currentWord);
+                resizeCodeArray(env,&env->currentWord);
             }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
@@ -554,7 +554,7 @@ else if (strcmp(token, "THEN") == 0) {
             env->control_stack[env->control_stack_top - 1].type = CT_WHILE;
             env->control_stack[env->control_stack_top - 1].addr = env->currentWord.code_length;
             if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-                resizeCodeArray(&env->currentWord);
+                resizeCodeArray(env,&env->currentWord);
             }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
@@ -570,7 +570,7 @@ else if (strcmp(token, "THEN") == 0) {
             instr.opcode = OP_REPEAT;
             instr.operand = while_entry.addr - 8;
             if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-                resizeCodeArray(&env->currentWord);
+                resizeCodeArray(env,&env->currentWord);
             }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             env->control_stack_top--;
@@ -586,7 +586,7 @@ else if (strcmp(token, "THEN") == 0) {
             instr.opcode = OP_UNTIL;
             instr.operand = begin_entry.addr;
             if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-                resizeCodeArray(&env->currentWord);
+                resizeCodeArray(env, &env->currentWord);
             }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
@@ -600,7 +600,7 @@ else if (strcmp(token, "THEN") == 0) {
             instr.opcode = OP_CASE;
             env->control_stack[env->control_stack_top++] = (ControlEntry){CT_CASE, env->currentWord.code_length};
             if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-                resizeCodeArray(&env->currentWord);
+                resizeCodeArray(env,&env->currentWord);
             }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
@@ -622,7 +622,7 @@ else if (strcmp(token, "THEN") == 0) {
             instr.operand = 0;
             env->control_stack[env->control_stack_top++] = (ControlEntry){CT_OF, env->currentWord.code_length};
             if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-                resizeCodeArray(&env->currentWord);
+                resizeCodeArray(env,&env->currentWord);
             }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
@@ -639,7 +639,7 @@ else if (strcmp(token, "THEN") == 0) {
             instr.operand = 0;
             env->control_stack[env->control_stack_top++] = (ControlEntry){CT_ENDOF, env->currentWord.code_length};
             if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-                resizeCodeArray(&env->currentWord);
+                resizeCodeArray(env,&env->currentWord);
             }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
@@ -663,7 +663,7 @@ else if (strcmp(token, "THEN") == 0) {
             }
             instr.opcode = OP_ENDCASE;
             if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-                resizeCodeArray(&env->currentWord);
+                resizeCodeArray(env,&env->currentWord);
             }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
@@ -680,7 +680,7 @@ else if (strcmp(token, "THEN") == 0) {
                     instr.opcode = OP_PUSH;
                     instr.operand = env->currentWord.string_count;
                     if (env->currentWord.string_count >= env->currentWord.string_capacity) {
-                        resizeStringArray(&env->currentWord);
+                        resizeStringArray(env,&env->currentWord);
                     }
                     env->currentWord.strings[env->currentWord.string_count++] = strdup(token);
                 } else {
@@ -694,13 +694,13 @@ else if (strcmp(token, "THEN") == 0) {
                 mpz_clear(test_num);
             }
             if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-                resizeCodeArray(&env->currentWord);
+                resizeCodeArray(env,&env->currentWord);
             }
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
         }
         if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-            resizeCodeArray(&env->currentWord);
+            resizeCodeArray(env,&env->currentWord);
         }
         env->currentWord.code[env->currentWord.code_length++] = instr;
         return;
