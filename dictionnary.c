@@ -45,39 +45,7 @@ void initDynamicDictionary(DynamicDictionary *dict) {
         }
     }
 }
-/* 
-void initDynamicDictionary(DynamicDictionary *dict) {
-    dict->capacity = 16;
-    dict->count = 0;
-    dict->words = (CompiledWord *)malloc(dict->capacity * sizeof(CompiledWord));
-    if (!dict->words) {
-        send_to_channel("Erreur : Échec de l’allocation du dictionnaire");
-        exit(1);
-    }
-
-    for (long int i = 0; i < dict->capacity; i++) {
-        dict->words[i].name = NULL;
-        dict->words[i].code_length = 0;
-        dict->words[i].code_capacity = 16;
-        dict->words[i].code = (Instruction *)calloc(dict->words[i].code_capacity, sizeof(Instruction));
-        dict->words[i].string_count = 0;
-        dict->words[i].string_capacity = 16;
-        dict->words[i].strings = (char **)calloc(dict->words[i].string_capacity, sizeof(char *));
-        dict->words[i].immediate = 0;
-
-        if (!dict->words[i].code || !dict->words[i].strings) {
-            send_to_channel("Erreur : Échec de l’allocation des tableaux dans CompiledWord");
-            for (long int j = 0; j < i; j++) {
-                free(dict->words[j].code);
-                free(dict->words[j].strings);
-            }
-            free(dict->words);
-            exit(1);
-        }
-    }
-}
  
-*/ 
  
 void resizeCompiledWordArrays(CompiledWord *word, int is_code) {
     if (is_code) {
@@ -135,44 +103,7 @@ void resizeDynamicDictionary(DynamicDictionary *dict) {
 }
  
  
-/*
-void addWord(DynamicDictionary *dict, const char *name, OpCode opcode, int immediate) {
-    if (dict->count >= dict->capacity) {
-        resizeDynamicDictionary(dict);
-    }
-    CompiledWord *word = &dict->words[dict->count];
-
-    // Ne libérer les ressources que si elles existent et si ce n’est pas une nouvelle entrée vierge
-    if (word->name && word->code_length > 0) { // Vérifier si le mot était déjà utilisé
-        free(word->name);
-        for (int j = 0; j < word->string_count; j++) {
-            if (word->strings[j]) free(word->strings[j]);
-        }
-        free(word->code);
-        free(word->strings);
-    }
-
-    // Initialiser avec les nouvelles valeurs
-    word->name = strdup(name);
-    word->code = (Instruction *)calloc(16, sizeof(Instruction));
-    word->code[0].opcode = opcode;
-    word->code_length = 1;
-    word->code_capacity = 16;
-    word->strings = (char **)calloc(16, sizeof(char *));
-    word->string_count = 0;
-    word->string_capacity = 16;
-    word->immediate = immediate;
-
-    if (!word->name || !word->code || !word->strings) {
-        send_to_channel("Erreur : Échec de l’allocation dans addWord");
-        if (word->name) free(word->name);
-        if (word->code) free(word->code);
-        if (word->strings) free(word->strings);
-        exit(1);
-    }
-    dict->count++;
-}
-*/ 
+ 
 void addWord(DynamicDictionary *dict, const char *name, OpCode opcode, int immediate) {
     if (dict->count >= dict->capacity) {
         resizeDynamicDictionary(dict);
@@ -427,9 +358,9 @@ void print_word_definition_irc(int index, Stack *stack, Env *env) {
             case OP_CLOCK: snprintf(instr_str, sizeof(instr_str), "CLOCK "); break;
             case OP_SEE: snprintf(instr_str, sizeof(instr_str), "SEE "); break;
             case OP_2DROP: snprintf(instr_str, sizeof(instr_str), "2DROP "); break;
-            case OP_CONSTANT:
-                snprintf(instr_str, sizeof(instr_str), "%ld ", instr.operand);
-                break;
+            case OP_CONSTANT: snprintf(instr_str, sizeof(instr_str), "%ld ", instr.operand);  break;
+            case OP_MICRO: snprintf(instr_str, sizeof(instr_str), "MICRO "); break;
+			case OP_MILLI: snprintf(instr_str, sizeof(instr_str), "MILLI "); break;
             default:
                 snprintf(instr_str, sizeof(instr_str), "(OP_%d %ld) ", instr.opcode, instr.operand);
                 break;
