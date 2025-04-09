@@ -1,15 +1,18 @@
 #include <pthread.h>
-#include <unistd.h> 
+#include <unistd.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include "memory_forth.h"
 #include "forth_bot.h"
 
- 
-pthread_mutex_t env_mutex = PTHREAD_MUTEX_INITIALIZER; // Initialize here
+pthread_mutex_t env_mutex = PTHREAD_MUTEX_INITIALIZER; // Mutex global pour la liste des environnements
 
-void initEnv(Env *env, const char *nick) {
+// Initialise un environnement Forth pour un utilisateur donné
+static void initEnv(Env *env, const char *nick) {
+    if (!env || !nick) return;
+
+    // Initialisation des champs de base
     strncpy(env->nick, nick, MAX_STRING_SIZE - 1);
     env->nick[MAX_STRING_SIZE - 1] = '\0';
 
@@ -22,10 +25,12 @@ void initEnv(Env *env, const char *nick) {
     for (int i = 0; i < MPZ_POOL_SIZE; i++) {
         mpz_init(env->mpz_pool[i]);
     }
-    initDynamicDictionary(&env->dictionary);
 
+    // Initialisation des structures dynamiques
+    initDynamicDictionary(&env->dictionary);
     memory_init(&env->memory_list);
 
+    // Ajout de la variable USERNAME
     unsigned long username_idx = memory_create(&env->memory_list, "USERNAME", TYPE_STRING);
     if (username_idx != 0) {
         MemoryNode *username_node = memory_get(&env->memory_list, username_idx);
@@ -44,6 +49,7 @@ void initEnv(Env *env, const char *nick) {
         }
     }
 
+    // Initialisation des buffers et états
     env->buffer_pos = 0;
     memset(env->output_buffer, 0, BUFFER_SIZE);
     env->currentWord.name = NULL;
@@ -51,29 +57,35 @@ void initEnv(Env *env, const char *nick) {
     env->currentWord.string_count = 0;
     env->compiling = 0;
     env->current_word_index = -1;
-
     env->control_stack_top = 0;
-
     env->string_stack_top = -1;
-    for (int i = 0; i < STACK_SIZE; i++) env->string_stack[i] = NULL;
-
+    for (int i = 0; i < STACK_SIZE; i++) {
+        env->string_stack[i] = NULL;
+    }
     env->error_flag = 0;
     env->emit_buffer[0] = '\0';
     env->emit_buffer_pos = 0;
 
-    // Initialize per-environment queue and thread fields
+    // Initialisation des champs pour la queue et le thread
     env->queue_head = 0;
     env->queue_tail = 0;
     env->in_use = 0;
-	pthread_mutex_init(&env->queue_mutex, NULL);
-    pthread_cond_init(&env->queue_cond, NULL);  // Initialisation de la condition
-    pthread_mutex_init(&env->in_use_mutex, NULL);  // Initialisation du mutex pour in_use
-    env->thread_running = 1;
- 
+    env->thread_running = 0; // Thread pas encore démarré
+    pthread_mutex_init(&env->queue_mutex, NULL);
+    pthread_cond_init(&env->queue_cond, NULL);
+    pthread_mutex_init(&env->in_use_mutex, NULL);
+    env->thread = 0; // Thread non défini
     env->next = NULL;
 }
 
+// Crée un nouvel environnement et le démarre
 Env *createEnv(const char *nick) {
+    if (!nick) {
+        send_to_channel("createEnv: Invalid nick");
+        return NULL;
+    }
+
+    // Allocation et initialisation
     Env *new_env = (Env *)malloc(sizeof(Env));
     if (!new_env) {
         send_to_channel("createEnv: Memory allocation failed");
@@ -82,23 +94,30 @@ Env *createEnv(const char *nick) {
     initEnv(new_env, nick);
     initDictionary(new_env);
 
+    // Démarrage du thread d'interprétation
+    new_env->thread_running = 1;
     if (pthread_create(&new_env->thread, NULL, env_interpret_thread, new_env) != 0) {
         send_to_channel("createEnv: Failed to create interpreter thread");
-        freeEnv(new_env->nick);  // Utilise freeEnv pour nettoyer proprement
+        freeEnv(new_env->nick); // Nettoyage complet en cas d'échec
         return NULL;
     }
-    pthread_detach(new_env->thread);
+    pthread_detach(new_env->thread); // Thread détaché, pas besoin de join explicite
 
+    // Ajout à la liste chaînée globale
     pthread_mutex_lock(&env_mutex);
     new_env->next = head;
     head = new_env;
     pthread_mutex_unlock(&env_mutex);
+
     return new_env;
 }
- 
-void freeEnv(const char *nick) {
-    Env *prev = NULL, *curr = head;
 
+// Libère un environnement de manière sécurisée
+void freeEnv(const char *nick) {
+    if (!nick) return;
+
+    // Recherche de l'environnement dans la liste
+    Env *prev = NULL, *curr = head;
     pthread_mutex_lock(&env_mutex);
     while (curr && strcmp(curr->nick, nick) != 0) {
         prev = curr;
@@ -106,64 +125,55 @@ void freeEnv(const char *nick) {
     }
     if (!curr) {
         pthread_mutex_unlock(&env_mutex);
-        return;
+        return; // Environnement non trouvé
     }
     if (prev) prev->next = curr->next;
     else head = curr->next;
     pthread_mutex_unlock(&env_mutex);
 
+    // Arrêt du thread
     curr->thread_running = 0;
     pthread_mutex_lock(&curr->queue_mutex);
-    pthread_cond_signal(&curr->queue_cond);
+    pthread_cond_signal(&curr->queue_cond); // Réveille le thread pour qu'il s'arrête
     pthread_mutex_unlock(&curr->queue_mutex);
 
-    int timeout = 500;
-    while (timeout > 0) {
+    // Attente de la fin du thread avec timeout
+    int timeout_ms = 500;
+    while (timeout_ms > 0) {
         pthread_mutex_lock(&curr->in_use_mutex);
         int in_use = curr->in_use;
         pthread_mutex_unlock(&curr->in_use_mutex);
         if (!in_use) break;
-        usleep(10000);
-        timeout--;
+        usleep(10000); // Attente de 10ms
+        timeout_ms -= 10;
     }
-    if (timeout <= 0) {
+    if (timeout_ms <= 0) {
         char err_msg[512];
-        snprintf(err_msg, sizeof(err_msg), "Warning: Timeout waiting for thread to finish for %s", nick);
+        snprintf(err_msg, sizeof(err_msg), "freeEnv: Timeout waiting for thread to finish for %s", nick);
         send_to_channel(err_msg);
     }
 
+    // Libération des ressources GMP
     for (int i = 0; i < MPZ_POOL_SIZE; i++) {
         mpz_clear(curr->mpz_pool[i]);
     }
-
     for (int i = 0; i < STACK_SIZE; i++) {
         mpz_clear(curr->main_stack.data[i]);
         mpz_clear(curr->return_stack.data[i]);
     }
 
-    // Libération du dictionnaire : toutes les entrées jusqu’à capacity
-    for (long int i = 0; i < curr->dictionary.capacity; i++) {  // Changement ici : capacity au lieu de count
-        if (curr->dictionary.words[i].name) {
-            free(curr->dictionary.words[i].name);
-            curr->dictionary.words[i].name = NULL;
-        }
+    // Libération du dictionnaire
+    for (long int i = 0; i < curr->dictionary.count; i++) {
+        free(curr->dictionary.words[i].name);
         for (int j = 0; j < curr->dictionary.words[i].string_count; j++) {
-            if (curr->dictionary.words[i].strings[j]) {
-                free(curr->dictionary.words[i].strings[j]);
-                curr->dictionary.words[i].strings[j] = NULL;
-            }
+            free(curr->dictionary.words[i].strings[j]);
         }
-        if (curr->dictionary.words[i].code) {
-            free(curr->dictionary.words[i].code);
-            curr->dictionary.words[i].code = NULL;
-        }
-        if (curr->dictionary.words[i].strings) {
-            free(curr->dictionary.words[i].strings);
-            curr->dictionary.words[i].strings = NULL;
-        }
+        free(curr->dictionary.words[i].code);
+        free(curr->dictionary.words[i].strings);
     }
     free(curr->dictionary.words);
 
+    // Libération de la liste mémoire
     MemoryNode *node = curr->memory_list.head;
     while (node) {
         MemoryNode *next = node->next;
@@ -171,29 +181,37 @@ void freeEnv(const char *nick) {
         node = next;
     }
 
-    if (curr->currentWord.name) free(curr->currentWord.name);
+    // Libération de currentWord
+    free(curr->currentWord.name);
     for (int i = 0; i < curr->currentWord.string_count; i++) {
-        if (curr->currentWord.strings[i]) free(curr->currentWord.strings[i]);
+        free(curr->currentWord.strings[i]);
     }
-    if (curr->currentWord.code) free(curr->currentWord.code);
-    if (curr->currentWord.strings) free(curr->currentWord.strings);
+    free(curr->currentWord.code);
+    free(curr->currentWord.strings);
 
+    // Libération de string_stack
     for (int i = 0; i <= curr->string_stack_top; i++) {
-        if (curr->string_stack[i]) free(curr->string_stack[i]);
+        free(curr->string_stack[i]);
     }
 
+    // Destruction des primitives de synchronisation
     pthread_mutex_destroy(&curr->queue_mutex);
     pthread_cond_destroy(&curr->queue_cond);
     pthread_mutex_destroy(&curr->in_use_mutex);
 
+    // Libération finale
     free(curr);
 }
+
+// Trouve un environnement par son nick
 Env *findEnv(const char *nick) {
+    if (!nick) return NULL;
+
     pthread_mutex_lock(&env_mutex);
     Env *curr = head;
-    while (curr && strcmp(curr->nick, nick) != 0) curr = curr->next;
+    while (curr && strcmp(curr->nick, nick) != 0) {
+        curr = curr->next;
+    }
     pthread_mutex_unlock(&env_mutex);
     return curr;
 }
-
- 
