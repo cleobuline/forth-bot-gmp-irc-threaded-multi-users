@@ -17,10 +17,10 @@
 static  void resizeCodeArray(CompiledWord *word) {
     long int new_capacity = word->code_capacity ? word->code_capacity * 2 : 1;
     Instruction *new_code = (Instruction *)realloc(word->code, new_capacity * sizeof(Instruction));
-    /*if (!new_code) {
+     if (!new_code) {
         set_error(env,"Failed to resize code array");
         return;
-    }*/
+    } 
     word->code = new_code;
     word->code_capacity = new_capacity;
 }
@@ -28,12 +28,12 @@ static  void resizeCodeArray(CompiledWord *word) {
 static void resizeStringArray(CompiledWord *word) {
     long int new_capacity = word->string_capacity ? word->string_capacity * 2 : 1;
     char **new_strings = (char **)realloc(word->strings, new_capacity * sizeof(char *));
-    /*
+    
     if (!new_strings) {
         set_error(env,"Failed to resize string array");
         return;
     }
-    */
+     
     word->strings = new_strings;
     word->string_capacity = new_capacity;
 }
@@ -447,63 +447,8 @@ void compileToken(char *token, char **input_rest, Env *env) {
             }
             return;
         }
-        else if (strcmp(token, "CONSTANT") == 0) {
-            char *next_token = strtok_r(NULL, " \t\n", input_rest);
-            if (!next_token) {
-                set_error(env,"CONSTANT requires a name");
-                env->compile_error = 1;
-                return;
-            }
-            if (env->main_stack.top < 0) {
-                set_error(env,"CONSTANT: Stack underflow");
-                env->compile_error = 1;
-                return;
-            }
-            mpz_t value;
-            pop(env, value);
-            int existing_idx = findCompiledWordIndex(next_token,env);
-            if (existing_idx >= 0) {
-                CompiledWord *word = &env->dictionary.words[existing_idx];
-                if (word->name) free(word->name);
-                if (word->code) free(word->code);
-                for (int j = 0; j < word->string_count; j++) {
-                    if (word->strings[j]) free(word->strings[j]);
-                }
-                if (word->strings) free(word->strings);
-                word->name = strdup(next_token);
-                word->code = (Instruction *)malloc(sizeof(Instruction));
-                word->code_capacity = 1;
-                word->code[0].opcode = OP_CONSTANT;
-                word->code[0].operand = mpz_get_ui(value);
-                word->code_length = 1;
-                word->strings = (char **)malloc(sizeof(char *));
-                word->string_capacity = 1;
-                word->string_count = 0;
-                word->immediate = 0;
-            } else {
-                if (env->dictionary.count >= env->dictionary.capacity) resizeDynamicDictionary(&env->dictionary);
-                int dict_idx = env->dictionary.count++;
-                env->dictionary.words[dict_idx].name = strdup(next_token);
-                env->dictionary.words[dict_idx].code = (Instruction *)malloc(sizeof(Instruction));
-                env->dictionary.words[dict_idx].code_capacity = 1;
-                env->dictionary.words[dict_idx].code[0].opcode = OP_CONSTANT;
-                env->dictionary.words[dict_idx].code[0].operand = mpz_get_ui(value);
-                env->dictionary.words[dict_idx].code_length = 1;
-                env->dictionary.words[dict_idx].strings = (char **)malloc(sizeof(char *));
-                env->dictionary.words[dict_idx].string_capacity = 1;
-                env->dictionary.words[dict_idx].string_count = 0;
-                env->dictionary.words[dict_idx].immediate = 0;
-            }
-            if (env->compiling) {
-                instr.opcode = OP_CONSTANT;
-                instr.operand = mpz_get_ui(value);
-                if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-                    resizeCodeArray(&env->currentWord);
-                }
-                env->currentWord.code[env->currentWord.code_length++] = instr;
-            }
-            return;
-        }
+        
+ 
         else if (strcmp(token, "\"") == 0) {
             char *start = *input_rest;
             char *end = strchr(start, '"');
