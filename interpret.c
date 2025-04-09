@@ -14,6 +14,7 @@
 #include "memory_forth.h"
 #include "forth_bot.h"
 
+ 
 void *env_interpret_thread(void *arg) {
     Env *env = (Env *)arg;
     while (env->thread_running) {
@@ -101,3 +102,5 @@ void interpret(char *input, Stack *stack, Env *env) {
         env->currentWord.string_capacity = 0;
     }
 }
+    
+ 
