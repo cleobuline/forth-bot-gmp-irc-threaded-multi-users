@@ -13,8 +13,33 @@
 #include <curl/curl.h>
 #include "memory_forth.h"
 #include "forth_bot.h"
+ 
 
-
+void freeCurrentWord(Env *env) {
+    if (env->currentWord.name) {
+        free(env->currentWord.name);
+        env->currentWord.name = NULL;
+    }
+    if (env->currentWord.code) {
+        free(env->currentWord.code);
+        env->currentWord.code = NULL;
+    }
+    for (int i = 0; i < env->currentWord.string_count; i++) {
+        if (env->currentWord.strings[i]) {
+            free(env->currentWord.strings[i]);
+            env->currentWord.strings[i] = NULL;
+        }
+    }
+    if (env->currentWord.strings) {
+        free(env->currentWord.strings);
+        env->currentWord.strings = NULL;
+    }
+    env->currentWord.code_length = 0;
+    env->currentWord.code_capacity = 0;
+    env->currentWord.string_count = 0;
+    env->currentWord.string_capacity = 0;
+    env->currentWord.immediate = 0;
+}
 void initDynamicDictionary(DynamicDictionary *dict) {
     dict->capacity = 128;  // Plus grand pour éviter les redimensionnements précoces
     dict->count = 0;
@@ -50,7 +75,7 @@ void initDynamicDictionary(DynamicDictionary *dict) {
 void resizeCompiledWordArrays(CompiledWord *word, int is_code) {
     if (is_code) {
         long int new_capacity = word->code_capacity * 2;
-        Instruction *new_code = (Instruction *)realloc(word->code, new_capacity * sizeof(Instruction));
+        Instruction *new_code = (Instruction *)SAFE_REALLOC(word->code, new_capacity * sizeof(Instruction));
         if (!new_code) {
             send_to_channel("Erreur : Échec du redimensionnement du tableau code");
             exit(1);
@@ -60,7 +85,7 @@ void resizeCompiledWordArrays(CompiledWord *word, int is_code) {
         word->code_capacity = new_capacity;
     } else {
         long int new_capacity = word->string_capacity * 2;
-        char **new_strings = (char **)realloc(word->strings, new_capacity * sizeof(char *));
+        char **new_strings = (char **)SAFE_REALLOC(word->strings, new_capacity * sizeof(char *));
         if (!new_strings) {
             send_to_channel("Erreur : Échec du redimensionnement du tableau strings");
             exit(1);
@@ -73,7 +98,7 @@ void resizeCompiledWordArrays(CompiledWord *word, int is_code) {
  
 void resizeDynamicDictionary(DynamicDictionary *dict) {
     long int new_capacity = dict->capacity * 2;
-    CompiledWord *new_words = (CompiledWord *)realloc(dict->words, new_capacity * sizeof(CompiledWord));
+    CompiledWord *new_words = (CompiledWord *)SAFE_REALLOC(dict->words, new_capacity * sizeof(CompiledWord));
     if (!new_words) {
         send_to_channel("Error: Failed to resize dictionary, operation aborted try to FORGET somme WORDS ");
         return;  // Ne pas exit, juste abandonner le redimensionnement
@@ -155,10 +180,10 @@ void print_word_definition_irc(int index, Stack *stack, Env *env) {
     }
 
     CompiledWord *word = &env->dictionary.words[index];
-    char def_msg[512] = "";
+    char def_msg[1024] = "";
     snprintf(def_msg, sizeof(def_msg), ": %s ", word->name);
 
-    long int *branch_targets = (long int *)malloc(word->code_capacity * sizeof(long int));
+    long int *branch_targets = (long int *)SAFE_MALLOC(word->code_capacity * sizeof(long int));
     if (!branch_targets) {
         send_to_channel("SEE: Memory allocation failed for branch targets");
         return;
@@ -421,7 +446,7 @@ void initDictionary(Env *env) {
     addWord(&env->dictionary, "LOOP", OP_LOOP, 0);
     addWord(&env->dictionary, "I", OP_I, 0);
     addWord(&env->dictionary, "WORDS", OP_WORDS, 0);
-    // addWord(&env->dictionary, "LOAD", OP_LOAD, 0);
+     addWord(&env->dictionary, "LOAD", OP_LOAD, 0);
     addWord(&env->dictionary, "CREATE", OP_CREATE, 0);
     addWord(&env->dictionary, "ALLOT", OP_ALLOT, 0);
     addWord(&env->dictionary, ".\"", OP_DOT_QUOTE, 0);
