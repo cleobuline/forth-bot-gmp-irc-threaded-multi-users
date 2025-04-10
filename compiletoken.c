@@ -673,24 +673,24 @@ else if (strcmp(token, "THEN") == 0) {
             if (index >= 0) {
                 instr.opcode = OP_CALL;
                 instr.operand = index;
-            } else {
-                mpz_t test_num;
-                mpz_init(test_num);
-                if (mpz_set_str(test_num, token, 10) == 0) {
-                    instr.opcode = OP_PUSH;
-                    instr.operand = env->currentWord.string_count;
-                    if (env->currentWord.string_count >= env->currentWord.string_capacity) {
-                        resizeStringArray(env,&env->currentWord);
-                    }
-                    env->currentWord.strings[env->currentWord.string_count++] = strdup(token);
-                } else {
-                    char msg[512];
-                    snprintf(msg, sizeof(msg), "Unknown word in definition: %s", token);
-                    send_to_channel(msg);
-                    env->compile_error = 1;
-                    mpz_clear(test_num);
-                    return;
+		} else {
+            mpz_t test_num;
+            mpz_init(test_num);
+            if (mpz_set_str(test_num, token, 10) == 0) {
+                instr.opcode = OP_PUSH;
+                instr.operand = env->currentWord.string_count;
+                if (env->currentWord.string_count >= env->currentWord.string_capacity) {
+                    resizeStringArray(env, &env->currentWord);
                 }
+                env->currentWord.strings[env->currentWord.string_count++] = strdup(token);
+            } else {
+                char msg[512];
+                snprintf(msg, sizeof(msg), "Unknown word in definition: %s", token);
+                send_to_channel(msg);
+                env->compile_error = 1;
+                mpz_clear(test_num);
+                return;
+            }
                 mpz_clear(test_num);
             }
             if (env->currentWord.code_length >= env->currentWord.code_capacity) {
@@ -708,7 +708,8 @@ else if (strcmp(token, "THEN") == 0) {
 
     // Mode interprétation
     else {
-       if (strcmp(token, "LOAD") == 0) {
+    
+        if (strcmp(token, "LOAD") == 0) {
     char *next_token = strtok_r(NULL, "\"", input_rest);
     if (!next_token || *next_token == '\0') {
         set_error(env,"LOAD: No filename provided");
@@ -772,7 +773,7 @@ else if (strcmp(token, "THEN") == 0) {
     }
     strtok_r(NULL, " \t\n", input_rest);
     return;
-}
+} 
         else if (strcmp(token, "CREATE") == 0) {
             char *next_token = strtok_r(NULL, " \t\n", input_rest);
             if (!next_token) {
