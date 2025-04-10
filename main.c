@@ -42,54 +42,92 @@ void enqueue(const char *cmd, const char *nick) {
     pthread_mutex_unlock(&env->queue_mutex);
 }
 
+// Retire et retourne une commande de la file d’attente d’un environnement
+Command *dequeue(Env *env) {
+    if (!env) return NULL;
+
+    pthread_mutex_lock(&env->queue_mutex);
+    if (env->queue_head == env->queue_tail) {
+        // File vide
+        pthread_mutex_unlock(&env->queue_mutex);
+        return NULL;
+    }
+
+    // Allouer une structure Command pour retourner la commande
+    Command *cmd = malloc(sizeof(Command));
+    if (!cmd) {
+        pthread_mutex_unlock(&env->queue_mutex);
+        return NULL;
+    }
+
+    // Copier la commande depuis la file
+    *cmd = env->queue[env->queue_head];
+    env->queue_head = (env->queue_head + 1) % QUEUE_SIZE;
+
+    pthread_mutex_unlock(&env->queue_mutex);
+    return cmd;
+}
+
 int main(int argc, char *argv[]) {
     char *server_name = "labynet.fr";
     char bot_nick[512] = "forth";
     channel = "#labynet";
 
+    // Gestion des arguments en ligne de commande
     if (argc == 4) {
         server_name = argv[1];
         strncpy(bot_nick, argv[2], sizeof(bot_nick) - 1);
         bot_nick[sizeof(bot_nick) - 1] = '\0';
         channel = argv[3];
+    } else if (argc != 1) {
+        printf("Usage: %s [server nick channel]\n", argv[0]);
+        return 1;
     }
 
+    printf("Starting Forth IRC bot on %s with nick %s in channel %s\n", server_name, bot_nick, channel);
+
+    // Boucle principale avec reconnexion automatique
     while (1) {
-        struct addrinfo hints, *res;
-        memset(&hints, 0, sizeof(hints));
-        hints.ai_family = AF_INET;
-        hints.ai_socktype = SOCK_STREAM;
-
-        int status = getaddrinfo(server_name, "6667", &hints, &res);
-        if (status != 0) {
-            printf("getaddrinfo failed: %s\n", gai_strerror(status));
-            sleep(5);
-            continue;
-        }
-
-        char server_ip[INET_ADDRSTRLEN];
-        struct sockaddr_in *ipv4 = (struct sockaddr_in *)res->ai_addr;
-        inet_ntop(AF_INET, &(ipv4->sin_addr), server_ip, sizeof(server_ip));
-        printf("Trying to connect to %s with nick %s...\n", server_ip, bot_nick);
-        irc_connect(server_ip, bot_nick);
-        freeaddrinfo(res);
-
+        // Tentative de connexion si déconnecté
         if (irc_socket == -1) {
-            printf("Failed to connect to %s\n", server_ip);
-            sleep(5);
-            continue;
+            struct addrinfo hints, *res;
+            memset(&hints, 0, sizeof(hints));
+            hints.ai_family = AF_INET;
+            hints.ai_socktype = SOCK_STREAM;
+
+            int status = getaddrinfo(server_name, "6667", &hints, &res);
+            if (status != 0) {
+                printf("getaddrinfo failed: %s, retrying in 5s...\n", gai_strerror(status));
+                sleep(5);
+                continue;
+            }
+
+            char server_ip[INET_ADDRSTRLEN];
+            struct sockaddr_in *ipv4 = (struct sockaddr_in *)res->ai_addr;
+            inet_ntop(AF_INET, &(ipv4->sin_addr), server_ip, sizeof(server_ip));
+            printf("Connecting to %s with nick %s...\n", server_ip, bot_nick);
+            irc_connect(server_ip, bot_nick);
+            freeaddrinfo(res);
+
+            if (irc_socket == -1) {
+                printf("Connection failed, retrying in 5s...\n");
+                sleep(5);
+                continue;
+            }
+            printf("Connected to %s\n", server_ip);
         }
-        printf("Connected to %s\n", server_ip);
 
         char buffer[4096];
         size_t buffer_pos = 0;
         int registered = 0;
 
-        while (1) {
+        // Boucle de réception des messages IRC
+        while (irc_socket != -1) {
             if (irc_receive(buffer, sizeof(buffer), &buffer_pos) == -1) {
+                printf("Disconnected from IRC, closing socket...\n");
                 close(irc_socket);
                 irc_socket = -1;
-                sleep(5);
+                sleep(1); // Petite pause avant reconnexion
                 break;
             }
 
@@ -108,7 +146,7 @@ int main(int argc, char *argv[]) {
                         if (env) {
                             if (env->in_use) {
                                 char quit_msg[512];
-                                snprintf(quit_msg, sizeof(quit_msg), "Operation impossible %s essayez plus tard ( opération en cours ) ", nick);
+                                snprintf(quit_msg, sizeof(quit_msg), "Operation impossible %s, essayez plus tard (opération en cours)", nick);
                                 send_to_channel(quit_msg);
                             } else {
                                 freeEnv(nick);
@@ -124,17 +162,17 @@ int main(int argc, char *argv[]) {
                         while (head) {
                             Env *temp = head;
                             head = head->next;
-                            char* nick = temp->nick;
-                                                            char quit_msg[512];
-                                snprintf(quit_msg, sizeof(quit_msg), "Environment for %s has been freed.", nick);
-                                send_to_channel(quit_msg);
+                            char quit_msg[512];
+                            snprintf(quit_msg, sizeof(quit_msg), "Environment for %s has been freed.", temp->nick);
+                            send_to_channel(quit_msg);
                             freeEnv(temp->nick);
                         }
                         if (irc_socket != -1) {
                             close(irc_socket);
                             irc_socket = -1;
                         }
-                        exit(0);
+                        printf("Bot terminated cleanly.\n");
+                        return 0; // Sortie propre
                     } else {
                         enqueue(cmd, nick);
                     }
@@ -143,13 +181,14 @@ int main(int argc, char *argv[]) {
                 start = end + 2;
             }
 
+            // Gestion des données restantes dans le buffer
             if (start != buffer) {
                 size_t remaining = buffer_pos - (start - buffer);
                 memmove(buffer, start, remaining);
                 buffer_pos = remaining;
                 buffer[buffer_pos] = '\0';
             } else if (buffer_pos == sizeof(buffer) - 1) {
-                printf("Buffer full, resetting\n");
+                printf("Buffer full, resetting...\n");
                 send_to_channel("Warning: IRC buffer full, data may be lost");
                 buffer_pos = 0;
                 buffer[0] = '\0';
@@ -157,6 +196,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    // Nettoyage final (jamais atteint à cause de la boucle infinie, mais bon à avoir)
     while (head) freeEnv(head->nick);
     if (irc_socket != -1) close(irc_socket);
     return 0;
