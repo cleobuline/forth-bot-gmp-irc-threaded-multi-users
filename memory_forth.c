@@ -2,7 +2,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "memory_forth.h"
-
+#include "forth_bot.h"
 void memory_init(MemoryList *list) {
     list->head = NULL;
     list->count = 0;
