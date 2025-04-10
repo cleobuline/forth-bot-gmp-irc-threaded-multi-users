@@ -14,31 +14,7 @@
 #include "memory_forth.h"
 #include "forth_bot.h"
  
-// Retire et retourne une commande de la file d’attente d’un environnement
-Command *dequeue(Env *env) {
-    if (!env) return NULL;
 
-    pthread_mutex_lock(&env->queue_mutex);
-    if (env->queue_head == env->queue_tail) {
-        // File vide
-        pthread_mutex_unlock(&env->queue_mutex);
-        return NULL;
-    }
-
-    // Allouer une structure Command pour retourner la commande
-    Command *cmd = malloc(sizeof(Command));
-    if (!cmd) {
-        pthread_mutex_unlock(&env->queue_mutex);
-        return NULL;
-    }
-
-    // Copier la commande depuis la file
-    *cmd = env->queue[env->queue_head];
-    env->queue_head = (env->queue_head + 1) % QUEUE_SIZE;
-
-    pthread_mutex_unlock(&env->queue_mutex);
-    return cmd;
-}
 void *env_interpret_thread(void *arg) {
     Env *env = (Env *)arg;
     while (env->thread_running) {
