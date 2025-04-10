@@ -1,6 +1,9 @@
 #ifndef FORTH_GLOBALS_H
 #define FORTH_GLOBALS_H
 
+#include <pthread.h>
+#include <signal.h> // Ajouté pour sig_atomic_t et SIGUSR1
+
 #define STACK_SIZE 500
 #define WORD_CODE_SIZE 512
 #define CONTROL_STACK_SIZE 100
@@ -211,9 +214,27 @@ struct irc_message {
     int arg_count;
 };
 
+extern volatile sig_atomic_t shutdown_flag; // Déclaré globalement
  
- 
- 
+
+#define SAFE_MALLOC(size) ({ \
+    void *ptr = malloc(size); \
+    if (!ptr) { \
+        send_to_channel("Fatal: Memory allocation failed"); \
+        pthread_kill(main_thread, SIGUSR1); \
+    } \
+    ptr; \
+})
+
+#define SAFE_REALLOC(ptr, size) ({ \
+    void *new_ptr = realloc(ptr, size); \
+    if (!new_ptr) { \
+        send_to_channel("Fatal: Memory reallocation failed"); \
+        pthread_kill(main_thread, SIGUSR1); \
+    } \
+    new_ptr; \
+})
+
 void parse_irc_message(const char *line, struct irc_message *msg);
 void free_irc_message(struct irc_message *msg);
 int irc_handle_message(const char *line, char *bot_nick, int *registered, char *nick_out, char *cmd_out, size_t cmd_out_size) ;
@@ -222,7 +243,9 @@ void executeInstruction(Instruction instr, Stack *stack, long int *ip, CompiledW
 void executeCompiledWord(CompiledWord *word, Stack *stack, int word_index, Env *env);
 void compileToken(char *token, char **input_rest, Env *env);
 void interpret(char *input, Stack *stack, Env *env);
- 
+
+
+void freeCurrentWord(Env *env);
 void print_word_definition_irc(int index, Stack *stack, Env *env);
 int findCompiledWordIndex(char *name, Env *env);
 void resizeDynamicDictionary(DynamicDictionary *dict);
@@ -263,3 +286,4 @@ extern char *channel;
 extern int irc_socket;
 extern pthread_mutex_t env_mutex;
 extern pthread_mutex_t irc_mutex;
+extern pthread_t main_thread;
