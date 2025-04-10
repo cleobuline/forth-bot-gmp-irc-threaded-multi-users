@@ -86,11 +86,8 @@ Env *createEnv(const char *nick) {
     }
 
     // Allocation et initialisation
-    Env *new_env = (Env *)malloc(sizeof(Env));
-    if (!new_env) {
-        send_to_channel("createEnv: Memory allocation failed");
-        return NULL;
-    }
+    Env *new_env = (Env *)SAFE_MALLOC(sizeof(Env)); // exit fail 
+ 
     initEnv(new_env, nick);
     initDictionary(new_env);
 
