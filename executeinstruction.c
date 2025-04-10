@@ -266,7 +266,7 @@ case OP_VARIABLE:
         if (env->dictionary.count >= env->dictionary.capacity) resizeDynamicDictionary(&env->dictionary);
         int dict_idx = env->dictionary.count++;
         env->dictionary.words[dict_idx].name = strdup(name);
-        env->dictionary.words[dict_idx].code = malloc(sizeof(Instruction));
+        env->dictionary.words[dict_idx].code = SAFE_MALLOC(sizeof(Instruction));
         if (!env->dictionary.words[dict_idx].name || !env->dictionary.words[dict_idx].code) {
             set_error(env, "VARIABLE: Memory allocation failed");
             free(env->dictionary.words[dict_idx].name);
@@ -276,7 +276,7 @@ case OP_VARIABLE:
         env->dictionary.words[dict_idx].code[0].opcode = OP_PUSH;
         env->dictionary.words[dict_idx].code[0].operand = index;
         env->dictionary.words[dict_idx].code_length = 1;
-        env->dictionary.words[dict_idx].strings = malloc(sizeof(char *));
+        env->dictionary.words[dict_idx].strings = SAFE_MALLOC(sizeof(char *));
         env->dictionary.words[dict_idx].string_capacity = 1;
         env->dictionary.words[dict_idx].string_count = 0;
         env->dictionary.words[dict_idx].immediate = 0;
@@ -480,7 +480,7 @@ case OP_FETCH:
         break;
     }
     unsigned long new_size = node->value.array.size + size;
-    mpz_t *new_array = realloc(node->value.array.data, new_size * sizeof(mpz_t));
+    mpz_t *new_array = SAFE_REALLOC(node->value.array.data, new_size * sizeof(mpz_t));
     if (!new_array) {
         set_error(env,"ALLOT: Memory allocation failed");
         push(env, *result);
@@ -798,34 +798,8 @@ case OP_WORDS:
     }
     break;
     
-case OP_LOAD: // NE FONCTIONNE PAS NE FAIT RIEN
- /*
- {
-    char *filename = NULL;
-    if (instr.operand >= 0 && instr.operand < word->string_count && word->strings[instr.operand]) {
-        filename = strdup(word->strings[instr.operand]);
-    } else {
-        set_error(env,"LOAD: No filename provided");
-        break;
-    }
-
-    FILE *file = fopen(filename, "r");
-    if (file) {
-        char buffer[512];
-        while (fgets(buffer, sizeof(buffer), file)) {
-            buffer[strcspn(buffer, "\n")] = '\0';
-            interpret(buffer, stack , env); // Utiliser la pile passée (stack, pas forcément main_stack)
-        }
-        fclose(file);
-    } else {
-        snprintf(temp_str, sizeof(temp_str), "LOAD: Cannot open file '%s'", filename);
-        set_error(env,temp_str);
-    }
-    free(filename);
- 
-}
- */ 
-    break;
+case OP_LOAD: {} // vide 
+break ; 
         case OP_PICK:
             pop(env, *a);
             int n = mpz_get_si(*a);
@@ -961,7 +935,7 @@ case OP_CREATE:
                 env->dictionary.words[dict_idx].string_count = 0;
                 MemoryNode *node = memory_get(&env->memory_list, index);
                 if (node && node->type == TYPE_ARRAY) {
-                    node->value.array.data = (mpz_t *)malloc(sizeof(mpz_t));
+                    node->value.array.data = (mpz_t *)SAFE_MALLOC(sizeof(mpz_t));
                     mpz_init(node->value.array.data[0]);
                     mpz_set_ui(node->value.array.data[0], 0);
                     node->value.array.size = 1;
@@ -976,7 +950,7 @@ case OP_CREATE:
                 env->dictionary.words[dict_idx].string_count = 0;
                 MemoryNode *node = memory_get(&env->memory_list, index);
                 if (node && node->type == TYPE_ARRAY) {
-                    node->value.array.data = (mpz_t *)malloc(sizeof(mpz_t));
+                    node->value.array.data = (mpz_t *)SAFE_MALLOC(sizeof(mpz_t));
                     mpz_init(node->value.array.data[0]);
                     mpz_set_ui(node->value.array.data[0], 0);
                     node->value.array.size = 1;
