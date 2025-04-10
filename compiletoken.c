@@ -16,7 +16,7 @@
 // Fonctions utilitaires pour redimensionner les tableaux dynamiques
 static  void resizeCodeArray(Env*env, CompiledWord *word) {
     long int new_capacity = word->code_capacity ? word->code_capacity * 2 : 1;
-    Instruction *new_code = (Instruction *)realloc(word->code, new_capacity * sizeof(Instruction));
+    Instruction *new_code = (Instruction *)SAFE_REALLOC(word->code, new_capacity * sizeof(Instruction));
      if (!new_code) {
        set_error(env,"Failed to resize code array");
         return;
@@ -27,7 +27,7 @@ static  void resizeCodeArray(Env*env, CompiledWord *word) {
 
 static void resizeStringArray(Env *env,CompiledWord *word) {
     long int new_capacity = word->string_capacity ? word->string_capacity * 2 : 1;
-    char **new_strings = (char **)realloc(word->strings, new_capacity * sizeof(char *));
+    char **new_strings = (char **)SAFE_REALLOC(word->strings, new_capacity * sizeof(char *));
     
     if (!new_strings) {
         set_error(env,"Failed to resize string array");
@@ -37,32 +37,7 @@ static void resizeStringArray(Env *env,CompiledWord *word) {
     word->strings = new_strings;
     word->string_capacity = new_capacity;
 }
-void freeCurrentWord(Env *env) {
-    if (env->currentWord.name) {
-        free(env->currentWord.name);
-        env->currentWord.name = NULL;
-    }
-    if (env->currentWord.code) {
-        free(env->currentWord.code);
-        env->currentWord.code = NULL;
-    }
-    for (int i = 0; i < env->currentWord.string_count; i++) {
-        if (env->currentWord.strings[i]) {
-            free(env->currentWord.strings[i]);
-            env->currentWord.strings[i] = NULL;
-        }
-    }
-    if (env->currentWord.strings) {
-        free(env->currentWord.strings);
-        env->currentWord.strings = NULL;
-    }
-    env->currentWord.code_length = 0;
-    env->currentWord.code_capacity = 0;
-    env->currentWord.string_count = 0;
-    env->currentWord.string_capacity = 0;
-    env->currentWord.immediate = 0;
-}
-
+ 
 void executeCompiledWord(CompiledWord *word, Stack *stack, int word_index, Env *env) {
     long int ip = 0;
     while (ip < word->code_length && !env->error_flag) {
@@ -101,12 +76,12 @@ void compileToken(char *token, char **input_rest, Env *env) {
             if (env->dictionary.count >= env->dictionary.capacity) resizeDynamicDictionary(&env->dictionary);
             int dict_idx = env->dictionary.count++;
             env->dictionary.words[dict_idx].name = strdup(next_token);
-            env->dictionary.words[dict_idx].code = (Instruction *)malloc(sizeof(Instruction));
+            env->dictionary.words[dict_idx].code = (Instruction *)SAFE_MALLOC(sizeof(Instruction));
             env->dictionary.words[dict_idx].code_capacity = 1;
             env->dictionary.words[dict_idx].code[0].opcode = OP_PUSH;
             env->dictionary.words[dict_idx].code[0].operand = index;
             env->dictionary.words[dict_idx].code_length = 1;
-            env->dictionary.words[dict_idx].strings = (char **)malloc(sizeof(char *));
+            env->dictionary.words[dict_idx].strings = (char **)SAFE_MALLOC(sizeof(char *));
             env->dictionary.words[dict_idx].string_capacity = 1;
             env->dictionary.words[dict_idx].string_count = 0;
             env->dictionary.words[dict_idx].immediate = 0;
@@ -130,7 +105,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
                 return;
             }
             CompiledWord temp_word = {0};
-            temp_word.strings = (char **)malloc(sizeof(char *));
+            temp_word.strings = (char **)SAFE_MALLOC(sizeof(char *));
             temp_word.string_capacity = 1;
             temp_word.strings[0] = strdup(next_token);
             temp_word.string_count = 1;
@@ -163,10 +138,10 @@ void compileToken(char *token, char **input_rest, Env *env) {
             env->dictionary.count++;
         }
         env->currentWord.name = strdup(next_token);
-        env->currentWord.code = (Instruction *)malloc(sizeof(Instruction));
+        env->currentWord.code = (Instruction *)SAFE_MALLOC(sizeof(Instruction));
         env->currentWord.code_capacity = 1;
         env->currentWord.code_length = 0;
-        env->currentWord.strings = (char **)malloc(sizeof(char *));
+        env->currentWord.strings = (char **)SAFE_MALLOC(sizeof(char *));
         env->currentWord.string_capacity = 1;
         env->currentWord.string_count = 0;
         env->currentWord.immediate = 0;
@@ -261,6 +236,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
     // Affichage d’une définition avec SEE
     if (strcmp(token, "SEE") == 0) {
         char *next_token = strtok_r(NULL, " \t\n", input_rest);
+       //  test pour malloc  void *test = SAFE_MALLOC(1ULL << 40); // Demande 1 téraoctet, probablement trop gros
         if (!next_token) {
             send_to_channel("SEE requires a word name");
             env->compile_error = 1;
@@ -375,12 +351,8 @@ void compileToken(char *token, char **input_rest, Env *env) {
                 return;
             }
             long int len = end - start;
-            char *str = malloc(len + 1);
-            if (!str) {
-                set_error(env,"Memory allocation failed for string");
-                env->compile_error = 1;
-                return;
-            }
+            char *str = SAFE_MALLOC(len + 1);
+ 
             strncpy(str, start, len);
             str[len] = '\0';
             instr.opcode = OP_DOT_QUOTE;
@@ -422,12 +394,12 @@ void compileToken(char *token, char **input_rest, Env *env) {
                 }
                 if (word->strings) free(word->strings);
                 word->name = strdup(next_token);
-                word->code = (Instruction *)malloc(sizeof(Instruction));
+                word->code = (Instruction *)SAFE_MALLOC(sizeof(Instruction));
                 word->code_capacity = 1;
                 word->code[0].opcode = OP_PUSH;
                 word->code[0].operand = encoded_index;
                 word->code_length = 1;
-                word->strings = (char **)malloc(sizeof(char *));
+                word->strings = (char **)SAFE_MALLOC(sizeof(char *));
                 word->string_capacity = 1;
                 word->string_count = 0;
                 word->immediate = 0;
@@ -435,12 +407,12 @@ void compileToken(char *token, char **input_rest, Env *env) {
                 if (env->dictionary.count >= env->dictionary.capacity) resizeDynamicDictionary(&env->dictionary);
                 int dict_idx = env->dictionary.count++;
                 env->dictionary.words[dict_idx].name = strdup(next_token);
-                env->dictionary.words[dict_idx].code = (Instruction *)malloc(sizeof(Instruction));
+                env->dictionary.words[dict_idx].code = (Instruction *)SAFE_MALLOC(sizeof(Instruction));
                 env->dictionary.words[dict_idx].code_capacity = 1;
                 env->dictionary.words[dict_idx].code[0].opcode = OP_PUSH;
                 env->dictionary.words[dict_idx].code[0].operand = encoded_index;
                 env->dictionary.words[dict_idx].code_length = 1;
-                env->dictionary.words[dict_idx].strings = (char **)malloc(sizeof(char *));
+                env->dictionary.words[dict_idx].strings = (char **)SAFE_MALLOC(sizeof(char *));
                 env->dictionary.words[dict_idx].string_capacity = 1;
                 env->dictionary.words[dict_idx].string_count = 0;
                 env->dictionary.words[dict_idx].immediate = 0;
@@ -458,7 +430,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
                 return;
             }
             long int len = end - start;
-            char *str = malloc(len + 1);
+            char *str = SAFE_MALLOC(len + 1);
             strncpy(str, start, len);
             str[len] = '\0';
             instr.opcode = OP_QUOTE;
@@ -797,18 +769,18 @@ else if (strcmp(token, "THEN") == 0) {
                 }
                 if (word->strings) free(word->strings);
                 word->name = strdup(next_token);
-                word->code = (Instruction *)malloc(sizeof(Instruction));
+                word->code = (Instruction *)SAFE_MALLOC(sizeof(Instruction));
                 word->code_capacity = 1;
                 word->code[0].opcode = OP_PUSH;
                 word->code[0].operand = index;
                 word->code_length = 1;
-                word->strings = (char **)malloc(sizeof(char *));
+                word->strings = (char **)SAFE_MALLOC(sizeof(char *));
                 word->string_capacity = 1;
                 word->string_count = 0;
                 word->immediate = 0;
                 MemoryNode *node = memory_get(&env->memory_list, index);
                 if (node && node->type == TYPE_ARRAY) {
-                    node->value.array.data = (mpz_t *)malloc(sizeof(mpz_t));
+                    node->value.array.data = (mpz_t *)SAFE_MALLOC(sizeof(mpz_t));
                     mpz_init(node->value.array.data[0]);
                     mpz_set_ui(node->value.array.data[0], 0);
                     node->value.array.size = 1;
@@ -817,18 +789,18 @@ else if (strcmp(token, "THEN") == 0) {
                 if (env->dictionary.count >= env->dictionary.capacity) resizeDynamicDictionary(&env->dictionary);
                 int dict_idx = env->dictionary.count++;
                 env->dictionary.words[dict_idx].name = strdup(next_token);
-                env->dictionary.words[dict_idx].code = (Instruction *)malloc(sizeof(Instruction));
+                env->dictionary.words[dict_idx].code = (Instruction *)SAFE_MALLOC(sizeof(Instruction));
                 env->dictionary.words[dict_idx].code_capacity = 1;
                 env->dictionary.words[dict_idx].code[0].opcode = OP_PUSH;
                 env->dictionary.words[dict_idx].code[0].operand = index;
                 env->dictionary.words[dict_idx].code_length = 1;
-                env->dictionary.words[dict_idx].strings = (char **)malloc(sizeof(char *));
+                env->dictionary.words[dict_idx].strings = (char **)SAFE_MALLOC(sizeof(char *));
                 env->dictionary.words[dict_idx].string_capacity = 1;
                 env->dictionary.words[dict_idx].string_count = 0;
                 env->dictionary.words[dict_idx].immediate = 0;
                 MemoryNode *node = memory_get(&env->memory_list, index);
                 if (node && node->type == TYPE_ARRAY) {
-                    node->value.array.data = (mpz_t *)malloc(sizeof(mpz_t));
+                    node->value.array.data = (mpz_t *)SAFE_MALLOC(sizeof(mpz_t));
                     mpz_init(node->value.array.data[0]);
                     mpz_set_ui(node->value.array.data[0], 0);
                     node->value.array.size = 1;
@@ -857,12 +829,12 @@ else if (strcmp(token, "THEN") == 0) {
                 }
                 if (word->strings) free(word->strings);
                 word->name = strdup(next_token);
-                word->code = (Instruction *)malloc(sizeof(Instruction));
+                word->code = (Instruction *)SAFE_MALLOC(sizeof(Instruction));
                 word->code_capacity = 1;
                 word->code[0].opcode = OP_PUSH;
                 word->code[0].operand = encoded_index;
                 word->code_length = 1;
-                word->strings = (char **)malloc(sizeof(char *));
+                word->strings = (char **)SAFE_MALLOC(sizeof(char *));
                 word->string_capacity = 1;
                 word->string_count = 0;
                 word->immediate = 0;
@@ -870,12 +842,12 @@ else if (strcmp(token, "THEN") == 0) {
                 if (env->dictionary.count >= env->dictionary.capacity) resizeDynamicDictionary(&env->dictionary);
                 int dict_idx = env->dictionary.count++;
                 env->dictionary.words[dict_idx].name = strdup(next_token);
-                env->dictionary.words[dict_idx].code = (Instruction *)malloc(sizeof(Instruction));
+                env->dictionary.words[dict_idx].code = (Instruction *)SAFE_MALLOC(sizeof(Instruction));
                 env->dictionary.words[dict_idx].code_capacity = 1;
                 env->dictionary.words[dict_idx].code[0].opcode = OP_PUSH;
                 env->dictionary.words[dict_idx].code[0].operand = encoded_index;
                 env->dictionary.words[dict_idx].code_length = 1;
-                env->dictionary.words[dict_idx].strings = (char **)malloc(sizeof(char *));
+                env->dictionary.words[dict_idx].strings = (char **)SAFE_MALLOC(sizeof(char *));
                 env->dictionary.words[dict_idx].string_capacity = 1;
                 env->dictionary.words[dict_idx].string_count = 0;
                 env->dictionary.words[dict_idx].immediate = 0;
@@ -900,7 +872,7 @@ else if (strcmp(token, "THEN") == 0) {
                 return;
             }
             long int len = end - start;
-            char *str = malloc(len + 1);
+            char *str = SAFE_MALLOC(len + 1);
             strncpy(str, start, len);
             str[len] = '\0';
             push_string(env,str);
@@ -952,7 +924,7 @@ else if (strcmp(token, "CONSTANT") == 0) {
         env->compile_error = 1;
         return;
     }
-    word->code = (Instruction *)malloc(sizeof(Instruction));
+    word->code = (Instruction *)SAFE_MALLOC(sizeof(Instruction));
     if (!word->code) {
         free(word->name);
         mpz_clear(value);
@@ -960,7 +932,7 @@ else if (strcmp(token, "CONSTANT") == 0) {
         env->compile_error = 1;
         return;
     }
-    word->strings = (char **)malloc(sizeof(char *));
+    word->strings = (char **)SAFE_MALLOC(sizeof(char *));
     if (!word->strings) {
         free(word->name);
         free(word->code);
