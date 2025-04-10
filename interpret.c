@@ -13,40 +13,61 @@
 #include <curl/curl.h>
 #include "memory_forth.h"
 #include "forth_bot.h"
-
  
+// Retire et retourne une commande de la file d’attente d’un environnement
+Command *dequeue(Env *env) {
+    if (!env) return NULL;
+
+    pthread_mutex_lock(&env->queue_mutex);
+    if (env->queue_head == env->queue_tail) {
+        // File vide
+        pthread_mutex_unlock(&env->queue_mutex);
+        return NULL;
+    }
+
+    // Allouer une structure Command pour retourner la commande
+    Command *cmd = malloc(sizeof(Command));
+    if (!cmd) {
+        pthread_mutex_unlock(&env->queue_mutex);
+        return NULL;
+    }
+
+    // Copier la commande depuis la file
+    *cmd = env->queue[env->queue_head];
+    env->queue_head = (env->queue_head + 1) % QUEUE_SIZE;
+
+    pthread_mutex_unlock(&env->queue_mutex);
+    return cmd;
+}
 void *env_interpret_thread(void *arg) {
     Env *env = (Env *)arg;
     while (env->thread_running) {
-        Command cmd_buffer = {0};  // Buffer local pour la commande
-        int has_cmd = 0;
-
-        pthread_mutex_lock(&env->queue_mutex);
-        while (env->queue_head == env->queue_tail && env->thread_running) {
-            pthread_cond_wait(&env->queue_cond, &env->queue_mutex);  // Attend un signal
-        }
-        if (env->queue_head != env->queue_tail) {
-            cmd_buffer = env->queue[env->queue_head];  // Copie locale pour éviter des problèmes
-            env->queue_head = (env->queue_head + 1) % QUEUE_SIZE;
-            has_cmd = 1;
-        }
-        pthread_mutex_unlock(&env->queue_mutex);
-
-        if (has_cmd) {
+        Command *cmd = dequeue(env);  // Récupérer la prochaine commande
+        if (cmd) {
             pthread_mutex_lock(&env->in_use_mutex);
             env->in_use = 1;
             pthread_mutex_unlock(&env->in_use_mutex);
 
-            interpret(cmd_buffer.cmd, &env->main_stack, env);
+            interpret(cmd->cmd, &env->main_stack, env);
 
             pthread_mutex_lock(&env->in_use_mutex);
             env->in_use = 0;
             pthread_mutex_unlock(&env->in_use_mutex);
+
+            // Libérer la commande allouée par dequeue
+            free(cmd);
+        } else {
+            // Pas de commande, attendre un signal
+            pthread_mutex_lock(&env->queue_mutex);
+            if (env->thread_running && env->queue_head == env->queue_tail) {
+                pthread_cond_wait(&env->queue_cond, &env->queue_mutex);
+            }
+            pthread_mutex_unlock(&env->queue_mutex);
         }
     }
     return NULL;
 }
- 
+ /* OLD VERSION 
 void interpret(char *input, Stack *stack, Env *env) {
     if (!env) {
         send_to_channel("DEBUG: env is NULL");
@@ -102,5 +123,75 @@ void interpret(char *input, Stack *stack, Env *env) {
         env->currentWord.string_capacity = 0;
     }
 }
+    */ 
     
+// new version to check for aborted defintion 
+ 
+void interpret(char *input, Stack *stack, Env *env) {
+    if (!env) {
+        send_to_channel("DEBUG: env is NULL");
+        return;
+    }
+
+    env->error_flag = 0;
+    env->compile_error = 0;
+
+    // Ne pas réinitialiser env->compiling ici, on vérifie juste les restes
+    if (env->compiling) {
+        set_error(env, "Previous compilation state detected, checking...");
+    }
+
+    char *saveptr;
+    char *token = strtok_r(input, " \t\n", &saveptr);
+    while (token && !env->error_flag && !env->compile_error) {
+        if (strcmp(token, "(") == 0) {
+            char *end = strstr(saveptr, ")");
+            if (end) saveptr = end + 1;
+            else saveptr = NULL;
+            token = strtok_r(NULL, " \t\n", &saveptr);
+            continue;
+        }
+
+        compileToken(token, &saveptr, env);
+
+        // Si erreur en compilation, sortir sans réinitialiser encore
+        if (env->compile_error && env->compiling) {
+            set_error(env, "Compilation error detected, will abort at end");
+            break;
+        }
+
+        if (!saveptr) break;
+        token = strtok_r(NULL, " \t\n", &saveptr);
+    }
+
+    // Gestion finale
+    if (env->compiling && !env->compile_error && env->control_stack_top == 0) {
+        if (env->current_word_index >= 0 && env->current_word_index < env->dictionary.capacity) {
+            CompiledWord *dict_word = &env->dictionary.words[env->current_word_index];
+            if (dict_word->name) free(dict_word->name);
+            if (dict_word->code) free(dict_word->code);
+            for (int j = 0; j < dict_word->string_count; j++) {
+                if (dict_word->strings[j]) free(dict_word->strings[j]);
+            }
+            if (dict_word->strings) free(dict_word->strings);
+
+            *dict_word = env->currentWord;
+            env->currentWord.name = NULL;
+            env->currentWord.code = NULL;
+            env->currentWord.strings = NULL;
+        }
+        env->compiling = 0;
+        env->control_stack_top = 0;
+        env->current_word_index = -1;
+    } else if (env->compiling) {
+        set_error(env, "Definition discarded due to error or incomplete structure");
+        freeCurrentWord(env);
+        env->compiling = 0;
+        env->control_stack_top = 0;
+        env->current_word_index = -1;
+        env->compile_error = 0;
+        env->dictionary.count--;// décremente pour cette definition avortée 
+    }
+}
+ 
  
