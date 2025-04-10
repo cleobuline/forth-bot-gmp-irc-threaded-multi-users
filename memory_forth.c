@@ -36,7 +36,7 @@ unsigned long memory_find_by_name(MemoryList *list, const char *name) {
     return 0; // Non trouvé
 }
 unsigned long memory_create(MemoryList *list, const char *name, unsigned long type) {
-    MemoryNode *node = (MemoryNode *)malloc(sizeof(MemoryNode));
+    MemoryNode *node = (MemoryNode *)SAFE_MALLOC(sizeof(MemoryNode));
     if (!node) return 0;
 
     node->name = strdup(name);
