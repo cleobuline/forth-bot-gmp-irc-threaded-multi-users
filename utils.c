@@ -8,13 +8,15 @@
 // Fonctions Forth
  
 
-void push(Env * env, mpz_t value) {
-    if (env->main_stack.top < STACK_SIZE - 1) {
-        mpz_set(env->main_stack.data[++env->main_stack.top], value);
-    } else {
-        if (env) env->error_flag = 1;
-        send_to_channel("Error: Stack overflow");
+void push(Env *env, mpz_t value) {
+    if (env->main_stack.top >= STACK_SIZE - 1) {
+        set_error(env, "Stack overflow");
+        env->main_stack.top = -1; // Réinitialise la pile principale
+        env->return_stack.top = -1; // Réinitialise la pile de retour
+        return;
     }
+    env->main_stack.top++;
+    mpz_set(env->main_stack.data[env->main_stack.top], value);
 }
 
 void pop(Env * env, mpz_t result) {
@@ -58,4 +60,3 @@ void set_error(Env * env,const char *msg) {
         env->return_stack.top -= 3;
     }
 }
- 
