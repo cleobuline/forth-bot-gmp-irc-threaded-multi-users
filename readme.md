@@ -1,6 +1,6 @@
 # ircforth - IRC Forth Bot
 
-ircforth est un bot IRC écrit en C qui interprète des commandes Forth envoyées via un canal IRC. Il prend en charge une variété de commandes Forth, y compris les opérations mathématiques, la manipulation de la pile, la génération d’images, et plus encore. Conçu pour être robuste et performant, Dalle utilise une architecture multi-threadée et une gestion moderne des connexions réseau avec `getaddrinfo`.
+ircforth est un bot IRC écrit en C qui interprète des commandes Forth envoyées via un canal IRC. Il prend en charge une variété de commandes Forth, y compris les opérations mathématiques, la manipulation de la pile, la génération d’images, et plus encore. Conçu pour être robuste et performant, rcforth utilise une architecture multi-threadée et une gestion moderne des connexions réseau avec `getaddrinfo`.
 
 ## Usage
 
