@@ -217,6 +217,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
         return;
     }
  
+  
     // Récursion
     if (strcmp(token, "RECURSE") == 0) {
         if (!env->compiling) {
@@ -232,6 +233,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
         env->currentWord.code[env->currentWord.code_length++] = instr;
         return;
     }
+  
  
     // Affichage d’une définition avec SEE
     if (strcmp(token, "SEE") == 0) {
