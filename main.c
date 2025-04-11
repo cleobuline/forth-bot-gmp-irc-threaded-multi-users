@@ -30,54 +30,6 @@ void handle_sigusr1(int sig) {
     shutdown_flag = 1;
 }
  
-void enqueue(const char *cmd, const char *nick) {
-    Env *env = findEnv(nick);
-    if (!env) {
-        env = createEnv(nick);
-        if (!env) return;
-    }
-
-    pthread_mutex_lock(&env->queue_mutex);
-    if ((env->queue_tail + 1) % QUEUE_SIZE != env->queue_head) {
-        strncpy(env->queue[env->queue_tail].cmd, cmd, sizeof(env->queue[env->queue_tail].cmd) - 1);
-        env->queue[env->queue_tail].cmd[sizeof(env->queue[env->queue_tail].cmd) - 1] = '\0';
-        strncpy(env->queue[env->queue_tail].nick, nick, sizeof(env->queue[env->queue_tail].nick) - 1);
-        env->queue[env->queue_tail].nick[sizeof(env->queue[env->queue_tail].nick) - 1] = '\0';
-        env->queue_tail = (env->queue_tail + 1) % QUEUE_SIZE;
-        pthread_cond_signal(&env->queue_cond);
-    } else {
-        char err_msg[512];
-        snprintf(err_msg, sizeof(err_msg), "Error: Command queue full for %s, command '%s' ignored", nick, cmd);
-        send_to_channel(err_msg);
-    }
-    pthread_mutex_unlock(&env->queue_mutex);
-}
-
-// Retire et retourne une commande de la file d’attente d’un environnement
-Command *dequeue(Env *env) {
-    if (!env) return NULL;
-
-    pthread_mutex_lock(&env->queue_mutex);
-    if (env->queue_head == env->queue_tail) {
-        // File vide
-        pthread_mutex_unlock(&env->queue_mutex);
-        return NULL;
-    }
-
-    // Allouer une structure Command pour retourner la commande
-    Command *cmd = malloc(sizeof(Command));
-    if (!cmd) {
-        pthread_mutex_unlock(&env->queue_mutex);
-        return NULL;
-    }
-
-    // Copier la commande depuis la file
-    *cmd = env->queue[env->queue_head];
-    env->queue_head = (env->queue_head + 1) % QUEUE_SIZE;
-
-    pthread_mutex_unlock(&env->queue_mutex);
-    return cmd;
-}
 
 int main(int argc, char *argv[]) {
     char *server_name = "labynet.fr";
