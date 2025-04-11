@@ -108,9 +108,23 @@ int main(int argc, char *argv[]) {
                 char nick[MAX_STRING_SIZE];
                 char cmd[512];
                 if (irc_handle_message(line, bot_nick, &registered, nick, cmd, sizeof(cmd))) { // Correction ici
-                    if (strcmp(cmd, "QUIT") == 0) {
-                        // ... (inchangé)
-                    } else if (strcmp(cmd, "EXIT") == 0) {
+					if (strcmp(cmd, "QUIT") == 0) {
+                        Env *env = findEnv(nick);
+                        if (env) {
+                            if (env->in_use) {
+                                char quit_msg[512];
+                                snprintf(quit_msg, sizeof(quit_msg), "Operation impossible %s, essayez plus tard (opération en cours)", nick);
+                                send_to_channel(quit_msg);
+                            } else {
+                                freeEnv(nick);
+                                char quit_msg[512];
+                                snprintf(quit_msg, sizeof(quit_msg), "Environment for %s has been freed.", nick);
+                                send_to_channel(quit_msg);
+                            }
+                        } else {
+                            send_to_channel("No environment found for you to quit.");
+                        }
+                        } else if (strcmp(cmd, "EXIT") == 0) {
                         send_to_channel("Bot shutting down...");
                         while (head) {
                             Env *temp = head;
