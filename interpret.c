@@ -235,6 +235,8 @@ void interpret(char *input, Stack *stack, Env *env) {
         env->current_word_index = -1;
         env->compile_error = 0;
         env->dictionary.count--;
+        env->main_stack.top = -1; // Réinitialise la pile principale
+    	env->return_stack.top = -1; // Réinitialise la pile de retour
     }
     // Sinon, on laisse env->compiling intact pour le prochain message
 }
