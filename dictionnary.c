@@ -258,10 +258,22 @@ void print_word_definition_irc(int index, Stack *stack, Env *env) {
                 if (branch_depth > 0) branch_depth--;
                 break;
             case OP_UNLOOP: snprintf(instr_str, sizeof(instr_str), "UNLOOP "); break;
+            
+            /*£ 
             case OP_BRANCH:
                 snprintf(instr_str, sizeof(instr_str), "BRANCH(%ld) ", instr.operand);
                 branch_targets[branch_depth++] = instr.operand;
                 break;
+                */
+                case OP_BRANCH:
+    // Si l'instruction précédente est dans un IF, suppose que c'est ELSE
+    if (i > 0 && (word->code[i - 1].opcode == OP_BRANCH_FALSE || word->code[i - 1].opcode == OP_CALL || word->code[i - 1].opcode == OP_MUL)) {
+        snprintf(instr_str, sizeof(instr_str), "ELSE ");
+    } else {
+        snprintf(instr_str, sizeof(instr_str), "BRANCH(%ld) ", instr.operand);
+    }
+    branch_targets[branch_depth++] = instr.operand;
+    break;
             case OP_BRANCH_FALSE:
                 snprintf(instr_str, sizeof(instr_str), "IF ");
                 branch_targets[branch_depth++] = instr.operand;
