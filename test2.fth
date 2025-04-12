@@ -4,9 +4,26 @@
 : FACTLOOP 1 + DUP 0 = IF DROP 1 EXIT THEN DUP 1 = IF DROP 1 EXIT THEN 1 SWAP 1 DO I * LOOP ;
 : HELLO  ." Hello " USERNAME @ PRINT ."  How are uou ? " CR ;
 : MACRON  ." Macron est un saint homme ! " CR ;
-: TEST-DELAY  COUNT ! BEGIN ." Hello " CR 1000 DELAY COUNT @ 1 - DUP COUNT ! 0 = UNTIL ;
+(               : TEST-DELAY  COUNT ! BEGIN ." Hello " CR 1000 DELAY COUNT @ 1 - DUP COUNT ! 0 = UNTIL ; )
 : CREDIT ." Brought  to you by Cleobuline https://github.com/cleobuline/forth-bot-gmp-irc-threaded-multi-users/tree/main Site https://labynet.fr " CR  ;
 VARIABLE START-TIME
 : SET-START MICRO START-TIME ! ;
 : TIME-SINCE MICRO START-TIME @ - ;
 : SHOW-TIME TIME-SINCE . ;
+
+: PRIME-FACTORS ( n -- )
+  >R 2           
+  BEGIN
+    R@ 1 > 
+  WHILE
+    R@ OVER MOD 0 = IF
+      DUP NUM-TO-STR  32 EMIT        
+      R@ OVER / R> DROP >R
+    ELSE
+      1 +
+    THEN
+  REPEAT
+  DROP R> DROP CR  ;
+
+
+  
