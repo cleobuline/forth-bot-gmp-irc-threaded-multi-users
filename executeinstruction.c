@@ -15,9 +15,8 @@
 
 void executeInstruction(Instruction instr, Stack *stack, long int *ip, CompiledWord *word, int word_index, Env *env) {
     if (!env || env->error_flag) return;
-    // printf( "Executing opcode %d at ip=%ld\n", instr.opcode, *ip);
     mpz_t *a = &env->mpz_pool[0], *b = &env->mpz_pool[1], *result = &env->mpz_pool[2];
-    char temp_str[512];
+    char temp_str[4096];
 unsigned long encoded_idx;
     unsigned long type;
     MemoryNode *node;
@@ -192,6 +191,12 @@ case OP_OR:
         push(env, *result);
         break;
 case OP_CALL:
+    if (env->return_stack.top >= STACK_SIZE - 1) {
+        set_error(env, "Return stack overflow in CALL");
+        env->main_stack.top = -1; // Réinitialise la pile principale
+        env->return_stack.top = -1; // Réinitialise la pile de retour
+        break;
+    }
     if (instr.operand >= 0 && instr.operand < env->dictionary.count) {
         executeCompiledWord(&env->dictionary.words[instr.operand], stack, instr.operand,env);
     } else {
@@ -1127,20 +1132,7 @@ case OP_IMAGE:
         stack->top = -1;
     }
     break;
-    /*  old version
-case OP_DELAY:
-    if (stack->top >= 0) {
-        mpz_t delay_ms;
-        mpz_init(delay_ms);
-        pop(env, delay_ms);
-        volatile unsigned long ms = mpz_get_ui(delay_ms); // Volatile pour éviter l’optimisation
-        usleep(ms * 1000);
-        mpz_clear(delay_ms);
-    } else {
-        set_error(env,"DELAY: Stack underflow");
-    }
-    break;
-    */
+ 
     case OP_DELAY:
     if (stack->top >= 0) {
         mpz_t delay_ms;
@@ -1154,7 +1146,14 @@ case OP_DELAY:
         set_error(env, "DELAY: Stack underflow");
     }
     break;
-    case OP_RECURSE:  // ne fait rien mais pour être consistant avec la liste des oerateurs
+case OP_RECURSE:
+/*
+    if (word_index >= 0 && word_index < env->dictionary.count) {
+        executeCompiledWord(&env->dictionary.words[word_index], stack, word_index, env);
+    } else {
+        set_error(env, "RECURSE: Invalid word index");
+    }
+    */
     break;
    case OP_CONSTANT:
      
