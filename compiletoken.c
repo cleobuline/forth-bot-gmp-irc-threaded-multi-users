@@ -490,12 +490,9 @@ else if (strcmp(token, "THEN") == 0) {
     }
     ControlEntry entry = env->control_stack[--env->control_stack_top];
     if (entry.type == CT_IF || entry.type == CT_ELSE) {
-        env->currentWord.code[entry.addr].operand = env->currentWord.code_length + 1; // Cible après OP_END
-        instr.opcode = OP_END;
-        if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-            resizeCodeArray(env,&env->currentWord);
-        }
-        env->currentWord.code[env->currentWord.code_length++] = instr;
+        // Résoudre le branchement pour pointer à l'instruction suivante
+        env->currentWord.code[entry.addr].operand = env->currentWord.code_length;
+        // Pas d'OP_END, car THEN ne termine pas la définition dans une boucle
     } else {
         set_error(env,"Invalid control structure");
         env->compile_error = 1;
@@ -517,39 +514,48 @@ else if (strcmp(token, "THEN") == 0) {
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
         }
-        else if (strcmp(token, "WHILE") == 0) {
-            if (env->control_stack_top <= 0 || env->control_stack[env->control_stack_top - 1].type != CT_BEGIN) {
-                set_error(env,"WHILE without BEGIN");
-                env->compile_error = 1;
-                return;
-            }
-            instr.opcode = OP_WHILE;
-            instr.operand = 0;
-            env->control_stack[env->control_stack_top - 1].type = CT_WHILE;
-            env->control_stack[env->control_stack_top - 1].addr = env->currentWord.code_length;
-            if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-                resizeCodeArray(env,&env->currentWord);
-            }
-            env->currentWord.code[env->currentWord.code_length++] = instr;
-            return;
+else if (strcmp(token, "WHILE") == 0) {
+    if (env->control_stack_top <= 0 || env->control_stack[env->control_stack_top - 1].type != CT_BEGIN) {
+        set_error(env,"WHILE without BEGIN");
+        env->compile_error = 1;
+        return;
+    }
+    instr.opcode = OP_WHILE;
+    instr.operand = 0;
+    // Ajouter une nouvelle entrée pour WHILE sans modifier BEGIN
+    if (env->control_stack_top >= CONTROL_STACK_SIZE) {
+        set_error(env,"Control stack overflow");
+        env->compile_error = 1;
+        return;
+    }
+    env->control_stack[env->control_stack_top++] = (ControlEntry){CT_WHILE, env->currentWord.code_length};
+    if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+        resizeCodeArray(env,&env->currentWord);
+    }
+    env->currentWord.code[env->currentWord.code_length++] = instr;
+    return;
+}
+else if (strcmp(token, "THEN") == 0) {
+    if (env->control_stack_top <= 0) {
+        set_error(env,"THEN without IF or ELSE");
+        env->compile_error = 1;
+        return;
+    }
+    ControlEntry entry = env->control_stack[--env->control_stack_top];
+    if (entry.type == CT_IF || entry.type == CT_ELSE) {
+        env->currentWord.code[entry.addr].operand = env->currentWord.code_length;
+        // Pas d'OP_END ici, car THEN ne termine pas le mot dans une boucle
+        if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+            resizeCodeArray(env,&env->currentWord);
         }
-        else if (strcmp(token, "REPEAT") == 0) {
-            if (env->control_stack_top <= 0 || env->control_stack[env->control_stack_top - 1].type != CT_WHILE) {
-                set_error(env,"REPEAT without WHILE");
-                env->compile_error = 1;
-                return;
-            }
-            ControlEntry while_entry = env->control_stack[env->control_stack_top - 1];
-            env->currentWord.code[while_entry.addr].operand = env->currentWord.code_length + 1;
-            instr.opcode = OP_REPEAT;
-            instr.operand = while_entry.addr - 8;
-            if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-                resizeCodeArray(env,&env->currentWord);
-            }
-            env->currentWord.code[env->currentWord.code_length++] = instr;
-            env->control_stack_top--;
-            return;
-        }
+        // Pas d'incrémentation de code_length, car aucune instruction ajoutée
+    } else {
+        set_error(env,"Invalid control structure");
+        env->compile_error = 1;
+        return;
+    }
+    return;
+}
         else if (strcmp(token, "UNTIL") == 0) {
             if (env->control_stack_top <= 0 || env->control_stack[env->control_stack_top - 1].type != CT_BEGIN) {
                 set_error(env,"UNTIL without BEGIN");
@@ -565,6 +571,43 @@ else if (strcmp(token, "THEN") == 0) {
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
         }
+        else if (strcmp(token, "AGAIN") == 0) {
+    if (env->control_stack_top <= 0 || env->control_stack[env->control_stack_top - 1].type != CT_BEGIN) {
+        set_error(env, "AGAIN without BEGIN");
+        env->compile_error = 1;
+        return;
+    }
+    instr.opcode = OP_AGAIN;
+    instr.operand = env->control_stack[env->control_stack_top - 1].addr;
+    if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+        resizeCodeArray(env, &env->currentWord);
+    }
+    env->currentWord.code[env->currentWord.code_length++] = instr;
+    env->control_stack_top--;
+    return;
+}else if (strcmp(token, "REPEAT") == 0) {
+    if (env->control_stack_top <= 0 || env->control_stack[env->control_stack_top - 1].type != CT_WHILE) {
+        set_error(env,"REPEAT without WHILE");
+        env->compile_error = 1;
+        return;
+    }
+    ControlEntry while_entry = env->control_stack[env->control_stack_top - 1];
+    env->currentWord.code[while_entry.addr].operand = env->currentWord.code_length + 1;
+    if (env->control_stack_top <= 1 || env->control_stack[env->control_stack_top - 2].type != CT_BEGIN) {
+        set_error(env,"REPEAT without BEGIN");
+        env->compile_error = 1;
+        return;
+    }
+    ControlEntry begin_entry = env->control_stack[env->control_stack_top - 2];
+    instr.opcode = OP_REPEAT;
+    instr.operand = begin_entry.addr;
+    if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+        resizeCodeArray(env, &env->currentWord);
+    }
+    env->currentWord.code[env->currentWord.code_length++] = instr;
+    env->control_stack_top -= 2; // Dépiler WHILE et BEGIN
+    return;
+}
         else if (strcmp(token, "CASE") == 0) {
             if (env->control_stack_top >= CONTROL_STACK_SIZE) {
                 set_error(env,"Control stack overflow");
