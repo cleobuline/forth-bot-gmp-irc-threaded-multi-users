@@ -105,17 +105,23 @@ case OP_PUSH:
                 mpz_set(stack->data[stack->top - 1], *a);
             } else set_error(env,"ROT: Stack underflow");
             break;
-        case OP_TO_R:
-            pop(env, *a);
-            if (!env->error_flag) {
-                if (env->return_stack.top < STACK_SIZE - 1) {
-                    mpz_set(env->return_stack.data[++env->return_stack.top], *a);
-                } else {
-                    set_error(env,">R: Return stack overflow");
-                    push(env, *a);
-                }
-            }
-            break;
+case OP_TO_R:
+    pop(env, *a);
+    if (!env->error_flag) {
+        if (env->return_stack.top < STACK_SIZE - 1) {
+            env->return_stack.top++;
+            mpz_set(env->return_stack.data[env->return_stack.top], *a);
+            //char debug_msg[512];
+            //snprintf(debug_msg, sizeof(debug_msg), ">R: Pushed value %s, return_stack_top=%ld", mpz_get_str(NULL, 10, *a), env->return_stack.top);
+            //send_to_channel(debug_msg);
+        } else {
+            char debug_msg[512];
+            snprintf(debug_msg, sizeof(debug_msg), ">R: Return stack overflow, top=%ld, STACK_SIZE=%d", env->return_stack.top, STACK_SIZE);
+            set_error(env, debug_msg);
+            push(env, *a);
+        }
+    }
+    break;
         case OP_FROM_R:
             if (env->return_stack.top >= 0) {
                 mpz_set(*a, env->return_stack.data[env->return_stack.top--]);
@@ -192,15 +198,20 @@ case OP_OR:
         break;
 case OP_CALL:
     if (env->return_stack.top >= STACK_SIZE - 1) {
-        set_error(env, "Return stack overflow in CALL");
-        env->main_stack.top = -1; // Réinitialise la pile principale
-        env->return_stack.top = -1; // Réinitialise la pile de retour
+        char debug_msg[512];
+        snprintf(debug_msg, sizeof(debug_msg), "CALL: Return stack overflow, top=%ld, STACK_SIZE=%d", env->return_stack.top, STACK_SIZE);
+        set_error(env, debug_msg);
+        env->main_stack.top = -1;
+        env->return_stack.top = -1;
         break;
     }
     if (instr.operand >= 0 && instr.operand < env->dictionary.count) {
-        executeCompiledWord(&env->dictionary.words[instr.operand], stack, instr.operand,env);
+        // char debug_msg[512];
+        //snprintf(debug_msg, sizeof(debug_msg), "CALL: Word %s, return_stack_top=%ld", env->dictionary.words[instr.operand].name, env->return_stack.top);
+        //send_to_channel(debug_msg);
+        executeCompiledWord(&env->dictionary.words[instr.operand], stack, instr.operand, env);
     } else {
-        set_error(env,"Invalid word index");
+        set_error(env, "Invalid word index");
     }
     break;
         case OP_BRANCH:
@@ -656,9 +667,13 @@ case OP_DOT_QUOTE:
             *ip = word->code_length;
             break;
 case OP_BEGIN:
+/*
+     snprintf(debug_msg, sizeof(debug_msg), "BEGIN: control_stack_top=%ld, CONTROL_STACK_SIZE=%d", env->control_stack_top, CONTROL_STACK_SIZE);
+            send_to_channel(debug_msg);
+            
     if (env->control_stack_top < CONTROL_STACK_SIZE) {
         env->control_stack[env->control_stack_top++] = (ControlEntry){CT_BEGIN, *ip};
-    } else set_error(env,"Control stack overflow");
+    } else set_error(env,"Control stack overflow");`*/
     break;
 case OP_WHILE:
     pop(env, *a);
