@@ -4,13 +4,41 @@
 : FACTLOOP 1 + DUP 0 = IF DROP 1 EXIT THEN DUP 1 = IF DROP 1 EXIT THEN 1 SWAP 1 DO I * LOOP ;
 : HELLO  ." Hello " USERNAME @ PRINT ."  How are uou ? " CR ;
 : MACRON  ." Macron est un saint homme ! " CR ;
- : TEST-DELAY  COUNT ! BEGIN ." Hello " CR 1000 DELAY COUNT @ 1 - DUP COUNT ! 0 = UNTIL ;  
+(               : TEST-DELAY  COUNT ! BEGIN ." Hello " CR 1000 DELAY COUNT @ 1 - DUP COUNT ! 0 = UNTIL ; )
 : CREDIT ." Brought  to you by Cleobuline https://github.com/cleobuline/forth-bot-gmp-irc-threaded-multi-users/tree/main Site https://labynet.fr " CR  ;
 VARIABLE START-TIME
 : SET-START MICRO START-TIME ! ;
 : TIME-SINCE MICRO START-TIME @ - ;
 : SHOW-TIME TIME-SINCE . ;
+ : 2DUP OVER OVER ;
+ :  3DUP 
+  2 PICK 2 PICK 2 
+   PICK ; 
+ : PRIME-FACTORS  
+  DUP 1 = IF DROP EXIT THEN
+  >R 2
+  BEGIN
+    R@ 1 >
+  WHILE
+    DUP DUP * R@ > IF
+      R@ NUM-TO-STR 32 EMIT
+      R> DROP 1 >R
+    ELSE
+      R@ OVER MOD 0 = IF
+        DUP NUM-TO-STR 32 EMIT
+        R@ OVER / R> DROP >R
+      ELSE
+        1 +
+      THEN
+    THEN
+  REPEAT
+  DROP R> DROP CR ;
+ 
+ : SHOW-PRIMES 0  DO   I PRIME? IF I NUM-TO-STR  32 EMIT  THEN  LOOP CR  ;  
+ 
 
+
+ 
  
 
 : TABLE-MULT ( n -- )
@@ -77,8 +105,8 @@ VARIABLE START-TIME
   
 : SPACES ( N -- ) 0 DO 32 EMIT LOOP ;
 
- 
- 
+ : PRINT-ASCII 126 32 1 + DO I NUM-TO-STR  32 EMIT  I EMIT 44 EMIT LOOP CR  ;  
+ :  MULTI-CHAR 0 DO DUP EMIT LOOP CR  DROP ;
 
 : NIP ( a b -- b )
   SWAP DROP ;
