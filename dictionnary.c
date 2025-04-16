@@ -13,7 +13,7 @@
 #include <curl/curl.h>
 #include "memory_forth.h"
 #include "forth_bot.h"
- 
+
 
 void freeCurrentWord(Env *env) {
     if (env->currentWord.name) {
@@ -183,18 +183,41 @@ void print_word_definition_irc(int index, Stack *stack, Env *env) {
     char def_msg[1024] = "";
     snprintf(def_msg, sizeof(def_msg), ": %s ", word->name);
 
-    long int *branch_targets = (long int *)SAFE_MALLOC(word->code_capacity * sizeof(long int));
-    if (!branch_targets) {
-        send_to_channel("SEE: Memory allocation failed for branch targets");
-        return;
-    }
-    int branch_depth = 0;
+    // Structure to track control flow for IF-ELSE-THEN
+    typedef struct {
+        long int if_addr;
+        long int else_addr;
+        long int then_addr;
+    } IfBlock;
+
+    IfBlock if_blocks[64];
+    int if_top = 0;
     int has_semicolon = 0;
 
     for (long int i = 0; i < word->code_length; i++) {
         Instruction instr = word->code[i];
-        char instr_str[64] = "";
+        char instr_str[128] = "";
 
+        // Check if this instruction is a THEN target
+         
+        for (int j = 0; j < if_top; j++) {
+            if (if_blocks[j].then_addr == i || 
+                (if_blocks[j].else_addr != -1 && word->code[if_blocks[j].else_addr].operand == i)) {
+                 
+                // Pop the block if it's fully resolved
+                if (j == if_top - 1) if_top--;
+                // Append "THEN " to the output
+                if (strlen(def_msg) + strlen("THEN ") >= sizeof(def_msg) - 1) {
+                    send_to_channel(def_msg);
+                    snprintf(def_msg, sizeof(def_msg), "THEN ");
+                } else {
+                    strncat(def_msg, "THEN ", sizeof(def_msg) - strlen(def_msg) - 1);
+                }
+                break;
+            }
+        }
+
+        // Process the current instruction
         switch (instr.opcode) {
             case OP_PUSH:
                 if (instr.operand < word->string_count && word->strings[instr.operand]) {
@@ -210,19 +233,16 @@ void print_word_definition_irc(int index, Stack *stack, Env *env) {
                     snprintf(instr_str, sizeof(instr_str), "(CALL %ld) ", instr.operand);
                 }
                 break;
-            case OP_ADD: snprintf(instr_str, sizeof(instr_str), "+ "); break;
-            case OP_SUB: snprintf(instr_str, sizeof(instr_str), "- "); break;
-            case OP_MUL: snprintf(instr_str, sizeof(instr_str), "* "); break;
-            case OP_DIV: snprintf(instr_str, sizeof(instr_str), "/ "); break;
-            case OP_MOD: snprintf(instr_str, sizeof(instr_str), "MOD "); break;
             case OP_DUP: snprintf(instr_str, sizeof(instr_str), "DUP "); break;
             case OP_DROP: snprintf(instr_str, sizeof(instr_str), "DROP "); break;
             case OP_SWAP: snprintf(instr_str, sizeof(instr_str), "SWAP "); break;
             case OP_OVER: snprintf(instr_str, sizeof(instr_str), "OVER "); break;
             case OP_ROT: snprintf(instr_str, sizeof(instr_str), "ROT "); break;
-            case OP_TO_R: snprintf(instr_str, sizeof(instr_str), ">R "); break;
-            case OP_FROM_R: snprintf(instr_str, sizeof(instr_str), "R> "); break;
-            case OP_R_FETCH: snprintf(instr_str, sizeof(instr_str), "R@ "); break;
+            case OP_ADD: snprintf(instr_str, sizeof(instr_str), "+ "); break;
+            case OP_SUB: snprintf(instr_str, sizeof(instr_str), "- "); break;
+            case OP_MUL: snprintf(instr_str, sizeof(instr_str), "* "); break;
+            case OP_DIV: snprintf(instr_str, sizeof(instr_str), "/ "); break;
+            case OP_MOD: snprintf(instr_str, sizeof(instr_str), "MOD "); break;
             case OP_EQ: snprintf(instr_str, sizeof(instr_str), "= "); break;
             case OP_LT: snprintf(instr_str, sizeof(instr_str), "< "); break;
             case OP_GT: snprintf(instr_str, sizeof(instr_str), "> "); break;
@@ -236,82 +256,69 @@ void print_word_definition_irc(int index, Stack *stack, Env *env) {
             case OP_BIT_NOT: snprintf(instr_str, sizeof(instr_str), "~ "); break;
             case OP_LSHIFT: snprintf(instr_str, sizeof(instr_str), "<< "); break;
             case OP_RSHIFT: snprintf(instr_str, sizeof(instr_str), ">> "); break;
-            case OP_CR: snprintf(instr_str, sizeof(instr_str), "CR "); break;
-            case OP_EMIT: snprintf(instr_str, sizeof(instr_str), "EMIT "); break;
             case OP_DOT: snprintf(instr_str, sizeof(instr_str), ". "); break;
             case OP_DOT_S: snprintf(instr_str, sizeof(instr_str), ".S "); break;
+            case OP_CR: snprintf(instr_str, sizeof(instr_str), "CR "); break;
+            case OP_EMIT: snprintf(instr_str, sizeof(instr_str), "EMIT "); break;
             case OP_FETCH: snprintf(instr_str, sizeof(instr_str), "@ "); break;
             case OP_STORE: snprintf(instr_str, sizeof(instr_str), "! "); break;
             case OP_PLUSSTORE: snprintf(instr_str, sizeof(instr_str), "+! "); break;
+            case OP_TO_R: snprintf(instr_str, sizeof(instr_str), ">R "); break;
+            case OP_FROM_R: snprintf(instr_str, sizeof(instr_str), "R> "); break;
+            case OP_R_FETCH: snprintf(instr_str, sizeof(instr_str), "R@ "); break;
             case OP_I: snprintf(instr_str, sizeof(instr_str), "I "); break;
             case OP_J: snprintf(instr_str, sizeof(instr_str), "J "); break;
-            case OP_DO:
-                snprintf(instr_str, sizeof(instr_str), "DO ");
-                branch_targets[branch_depth++] = i;
-                break;
-            case OP_LOOP:
-                snprintf(instr_str, sizeof(instr_str), "LOOP ");
-                if (branch_depth > 0) branch_depth--;
-                break;
-            case OP_PLUS_LOOP:
-                snprintf(instr_str, sizeof(instr_str), "+LOOP ");
-                if (branch_depth > 0) branch_depth--;
-                break;
-            case OP_UNLOOP: snprintf(instr_str, sizeof(instr_str), "UNLOOP "); break;
-            
-            /*£ 
-            case OP_BRANCH:
-                snprintf(instr_str, sizeof(instr_str), "BRANCH(%ld) ", instr.operand);
-                branch_targets[branch_depth++] = instr.operand;
-                break;
-                */
-                case OP_BRANCH:
-    // Si l'instruction précédente est dans un IF, suppose que c'est ELSE
-    if (i > 0 && (word->code[i - 1].opcode == OP_BRANCH_FALSE || word->code[i - 1].opcode == OP_CALL || word->code[i - 1].opcode == OP_MUL)) {
-        snprintf(instr_str, sizeof(instr_str), "ELSE ");
-    } else {
-        snprintf(instr_str, sizeof(instr_str), "BRANCH(%ld) ", instr.operand);
-    }
-    branch_targets[branch_depth++] = instr.operand;
-    break;
             case OP_BRANCH_FALSE:
                 snprintf(instr_str, sizeof(instr_str), "IF ");
-                branch_targets[branch_depth++] = instr.operand;
-                break;
-            case OP_CASE:
-                snprintf(instr_str, sizeof(instr_str), "CASE ");
-                branch_targets[branch_depth++] = i;
-                break;
-            case OP_OF:
-                snprintf(instr_str, sizeof(instr_str), "OF ");
-                branch_targets[branch_depth++] = instr.operand;
-                break;
-            case OP_ENDOF:
-                snprintf(instr_str, sizeof(instr_str), "ENDOF ");
-                if (branch_depth > 0) branch_depth--;
-                break;
-            case OP_ENDCASE:
-                snprintf(instr_str, sizeof(instr_str), "ENDCASE ");
-                if (branch_depth > 0) branch_depth--;
-                break;
-            case OP_END:
-                if (branch_depth > 0 && i + 1 == branch_targets[branch_depth - 1]) {
-                    snprintf(instr_str, sizeof(instr_str), "THEN ");
-                    branch_depth--;
-                    if (i + 1 == word->code_length) {
-                        strncat(instr_str, ";", sizeof(instr_str) - strlen(instr_str) - 1);
-                        has_semicolon = 1;
-                    }
-                } else if (i + 1 == word->code_length) {
-                    snprintf(instr_str, sizeof(instr_str), "; ");
-                    has_semicolon = 1;
+                if (if_top < 64) {
+                    if_blocks[if_top].if_addr = i;
+                    if_blocks[if_top].else_addr = -1;
+                    if_blocks[if_top].then_addr = word->code[i].operand;
+                    if_top++;
                 }
                 break;
+            case OP_BRANCH:
+                if (if_top > 0 && if_blocks[if_top - 1].else_addr == -1) {
+                    snprintf(instr_str, sizeof(instr_str), "ELSE ");
+                    if_blocks[if_top - 1].else_addr = i;
+                    if_blocks[if_top - 1].then_addr = word->code[i].operand;
+                } else {
+                    snprintf(instr_str, sizeof(instr_str), "BRANCH(%ld) ", word->code[i].operand);
+                }
+                break;
+            case OP_END:
+                if (i + 1 == word->code_length) {
+                    snprintf(instr_str, sizeof(instr_str), "; ");
+                    has_semicolon = 1;
+                } else {
+                    snprintf(instr_str, sizeof(instr_str), "END ");
+                }
+                break;
+            case OP_DO: snprintf(instr_str, sizeof(instr_str), "DO "); break;
+            case OP_LOOP: snprintf(instr_str, sizeof(instr_str), "LOOP "); break;
+            case OP_PLUS_LOOP: snprintf(instr_str, sizeof(instr_str), "+LOOP "); break;
+            case OP_UNLOOP: snprintf(instr_str, sizeof(instr_str), "UNLOOP "); break;
+            case OP_BEGIN: snprintf(instr_str, sizeof(instr_str), "BEGIN "); break;
+            case OP_WHILE: snprintf(instr_str, sizeof(instr_str), "WHILE "); break;
+            case OP_REPEAT: snprintf(instr_str, sizeof(instr_str), "REPEAT "); break;
+            case OP_UNTIL: snprintf(instr_str, sizeof(instr_str), "UNTIL "); break;
+            case OP_AGAIN: snprintf(instr_str, sizeof(instr_str), "AGAIN "); break;
+            case OP_CASE: snprintf(instr_str, sizeof(instr_str), "CASE "); break;
+            case OP_OF: snprintf(instr_str, sizeof(instr_str), "OF "); break;
+            case OP_ENDOF: snprintf(instr_str, sizeof(instr_str), "ENDOF "); break;
+            case OP_ENDCASE: snprintf(instr_str, sizeof(instr_str), "ENDCASE "); break;
             case OP_DOT_QUOTE:
                 if (instr.operand < word->string_count && word->strings[instr.operand]) {
                     snprintf(instr_str, sizeof(instr_str), ".\" %s \" ", word->strings[instr.operand]);
                 } else {
                     snprintf(instr_str, sizeof(instr_str), ".\"(invalid) ");
+                }
+                break;
+            case OP_QUOTE:
+                if (instr.operand < word->string_count && word->strings[instr.operand]) {
+                    snprintf(instr_str, sizeof(instr_str), "\" %s \" ", word->strings[instr.operand]);
+                } else {
+                    snprintf(instr_str, sizeof(instr_str), "\"(invalid) ");
                 }
                 break;
             case OP_VARIABLE:
@@ -328,40 +335,6 @@ void print_word_definition_irc(int index, Stack *stack, Env *env) {
                     snprintf(instr_str, sizeof(instr_str), "STRING(invalid) ");
                 }
                 break;
-            case OP_QUOTE:
-                if (instr.operand < word->string_count && word->strings[instr.operand]) {
-                    snprintf(instr_str, sizeof(instr_str), "\" %s \" ", word->strings[instr.operand]);
-                } else {
-                    snprintf(instr_str, sizeof(instr_str), "\"(invalid) ");
-                }
-                break;
-            case OP_PRINT: snprintf(instr_str, sizeof(instr_str), "PRINT "); break;
-            case OP_NUM_TO_BIN: snprintf(instr_str, sizeof(instr_str), "NUM-TO-BIN "); break;
-            case OP_PRIME_TEST: snprintf(instr_str, sizeof(instr_str), "PRIME? "); break;
-            case OP_BEGIN:
-                snprintf(instr_str, sizeof(instr_str), "BEGIN ");
-                branch_targets[branch_depth++] = i;
-                break;
-            case OP_WHILE:
-                snprintf(instr_str, sizeof(instr_str), "WHILE ");
-                branch_targets[branch_depth++] = instr.operand;
-                break;
-            case OP_REPEAT:
-                snprintf(instr_str, sizeof(instr_str), "REPEAT ");
-                if (branch_depth > 0) branch_depth--;
-                break;
-            case OP_UNTIL:
-                snprintf(instr_str, sizeof(instr_str), "UNTIL ");
-                if (branch_depth > 0) branch_depth--;
-                break;
-            case OP_AGAIN:
-                snprintf(instr_str, sizeof(instr_str), "AGAIN ");
-                if (branch_depth > 0) branch_depth--;
-                break;
-            case OP_EXIT:
-                snprintf(instr_str, sizeof(instr_str), "EXIT ");
-                break;
-            case OP_WORDS: snprintf(instr_str, sizeof(instr_str), "WORDS "); break;
             case OP_FORGET:
                 if (instr.operand < word->string_count && word->strings[instr.operand]) {
                     snprintf(instr_str, sizeof(instr_str), "FORGET %s ", word->strings[instr.operand]);
@@ -369,14 +342,6 @@ void print_word_definition_irc(int index, Stack *stack, Env *env) {
                     snprintf(instr_str, sizeof(instr_str), "FORGET(invalid) ");
                 }
                 break;
-            case OP_LOAD:
-                if (instr.operand < word->string_count && word->strings[instr.operand]) {
-                    snprintf(instr_str, sizeof(instr_str), "LOAD %s ", word->strings[instr.operand]);
-                } else {
-                    snprintf(instr_str, sizeof(instr_str), "LOAD(invalid) ");
-                }
-                break;
-            case OP_ALLOT: snprintf(instr_str, sizeof(instr_str), "ALLOT "); break;
             case OP_CREATE:
                 if (instr.operand < word->string_count && word->strings[instr.operand]) {
                     snprintf(instr_str, sizeof(instr_str), "CREATE %s ", word->strings[instr.operand]);
@@ -384,6 +349,17 @@ void print_word_definition_irc(int index, Stack *stack, Env *env) {
                     snprintf(instr_str, sizeof(instr_str), "CREATE(invalid) ");
                 }
                 break;
+            case OP_ALLOT: snprintf(instr_str, sizeof(instr_str), "ALLOT "); break;
+            case OP_LOAD:
+                if (instr.operand < word->string_count && word->strings[instr.operand]) {
+                    snprintf(instr_str, sizeof(instr_str), "LOAD %s ", word->strings[instr.operand]);
+                } else {
+                    snprintf(instr_str, sizeof(instr_str), "LOAD(invalid) ");
+                }
+                break;
+            case OP_WORDS: snprintf(instr_str, sizeof(instr_str), "WORDS "); break;
+            case OP_NUM_TO_BIN: snprintf(instr_str, sizeof(instr_str), "NUM-TO-BIN "); break;
+            case OP_PRIME_TEST: snprintf(instr_str, sizeof(instr_str), "PRIME? "); break;
             case OP_RECURSE: snprintf(instr_str, sizeof(instr_str), "RECURSE "); break;
             case OP_SQRT: snprintf(instr_str, sizeof(instr_str), "SQRT "); break;
             case OP_PICK: snprintf(instr_str, sizeof(instr_str), "PICK "); break;
@@ -395,30 +371,39 @@ void print_word_definition_irc(int index, Stack *stack, Env *env) {
             case OP_CLOCK: snprintf(instr_str, sizeof(instr_str), "CLOCK "); break;
             case OP_SEE: snprintf(instr_str, sizeof(instr_str), "SEE "); break;
             case OP_2DROP: snprintf(instr_str, sizeof(instr_str), "2DROP "); break;
-            case OP_CONSTANT: snprintf(instr_str, sizeof(instr_str), "%ld ", instr.operand);  break;
+            case OP_CONSTANT: snprintf(instr_str, sizeof(instr_str), "%ld ", instr.operand); break;
             case OP_MICRO: snprintf(instr_str, sizeof(instr_str), "MICRO "); break;
-			case OP_MILLI: snprintf(instr_str, sizeof(instr_str), "MILLI "); break;
+            case OP_MILLI: snprintf(instr_str, sizeof(instr_str), "MILLI "); break;
+            case OP_EXIT: snprintf(instr_str, sizeof(instr_str), "EXIT "); break;
+            case OP_DELAY: snprintf(instr_str, sizeof(instr_str), "DELAY "); break;
+            case OP_IMAGE: snprintf(instr_str, sizeof(instr_str), "IMAGE "); break;
+            case OP_TEMP_IMAGE: snprintf(instr_str, sizeof(instr_str), "TEMP-IMAGE "); break;
+            case OP_CLEAR_STRINGS: snprintf(instr_str, sizeof(instr_str), "CLEAR-STRINGS "); break;
+            case OP_PRINT: snprintf(instr_str, sizeof(instr_str), "PRINT "); break;
             default:
                 snprintf(instr_str, sizeof(instr_str), "(OP_%d %ld) ", instr.opcode, instr.operand);
                 break;
         }
 
-        if (strlen(def_msg) + strlen(instr_str) >= sizeof(def_msg) - 1) {
-            send_to_channel(def_msg);
-            snprintf(def_msg, sizeof(def_msg), "%s ", instr_str);
-        } else {
-            strncat(def_msg, instr_str, sizeof(def_msg) - strlen(def_msg) - 1);
+        // Append the instruction string to the output buffer
+        if (instr_str[0] != '\0') {
+            if (strlen(def_msg) + strlen(instr_str) >= sizeof(def_msg) - 1) {
+                send_to_channel(def_msg);
+                snprintf(def_msg, sizeof(def_msg), "%s ", instr_str);
+            } else {
+                strncat(def_msg, instr_str, sizeof(def_msg) - strlen(def_msg) - 1);
+            }
         }
     }
 
+    // Append semicolon if not already present
     if (!has_semicolon) {
         strncat(def_msg, ";", sizeof(def_msg) - strlen(def_msg) - 1);
     }
 
     send_to_channel(def_msg);
-    free(branch_targets);
 }
-
+ 
 void initDictionary(Env *env) {
     addWord(&env->dictionary, ".S", OP_DOT_S, 0);
     addWord(&env->dictionary, ".", OP_DOT, 0);
@@ -488,3 +473,4 @@ void initDictionary(Env *env) {
     addWord(&env->dictionary, "MICRO", OP_MICRO, 0);
     addWord(&env->dictionary, "MILLI", OP_MILLI, 0);
 }
+ 
