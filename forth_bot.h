@@ -2,22 +2,20 @@
 #define FORTH_GLOBALS_H
 
 #include <pthread.h>
-#include <signal.h> // Ajouté pour sig_atomic_t et SIGUSR1
+#include <signal.h>
 
-#define STACK_SIZE 500
+#define STACK_SIZE 1000
 #define WORD_CODE_SIZE 512
 #define CONTROL_STACK_SIZE 100
 #define MAX_STRING_SIZE 256
 #define MPZ_POOL_SIZE 3
-#define BUFFER_SIZE 2048
- 
-#define SERVER "46.16.175.175" // default 
+#define BUFFER_SIZE 4096
+#define SERVER "46.16.175.175"
 #define PORT 6667
 #define BOT_NAME "mforth"
 #define USER "mforth"
 #define CHANNEL "##forth"
 
- 
 typedef enum {
     OP_PUSH,
     OP_ADD,
@@ -104,37 +102,40 @@ typedef enum {
     OP_MICRO,
     OP_MILLI
 } OpCode;
+
+#define IRC_MSG_QUEUE_SIZE 100
+typedef struct {
+    char msg[4096];
+    int used;
+} IrcMessage;
+
 typedef struct {
     OpCode opcode;
     long int operand;
 } Instruction;
 
-// Définir CompiledWord avant DynamicDictionary
 typedef struct {
     char *name;
-    Instruction *code;         // Pointeur vers un tableau d'instructions
-    long int code_length;      // Nombre d'instructions utilisées
-    long int code_capacity;    // Capacité allouée pour le tableau code
-    char **strings;            // Pointeur vers un tableau de chaînes
-    long int string_count;     // Nombre de chaînes utilisées
-    long int string_capacity;  // Capacité allouée pour le tableau strings
+    Instruction *code;
+    long int code_length;
+    long int code_capacity;
+    char **strings;
+    long int string_count;
+    long int string_capacity;
     int immediate;
 } CompiledWord;
 
 typedef struct {
-    CompiledWord *words;   // Pointeur vers les mots alloués dynamiquement
-    long int count;        // Nombre de mots actuels
-    long int capacity;     // Capacité actuelle du tableau
+    CompiledWord *words;
+    long int count;
+    long int capacity;
 } DynamicDictionary;
- 
- 
-// Structure pour une pile Forth
+
 typedef struct {
     mpz_t data[STACK_SIZE];
     long int top;
 } Stack;
 
-// Structure pour les structures de contrôle
 typedef enum { CT_IF, CT_ELSE, CT_DO, CT_CASE, CT_OF, CT_ENDOF, CT_BEGIN, CT_WHILE, CT_REPEAT } ControlType;
 
 typedef struct {
@@ -142,7 +143,6 @@ typedef struct {
     long int addr;
 } ControlEntry;
 
-// Structure pour la mémoire Forth
 typedef enum {
     MEMORY_VARIABLE,
     MEMORY_ARRAY,
@@ -157,22 +157,19 @@ typedef struct {
     long int size;
 } Memory;
 
-#define LOOP_STACK_SIZE 16  // Taille max de la pile de boucles, ajustable
+#define LOOP_STACK_SIZE 16
 
 typedef struct {
-    mpz_t index;    // Index actuel de la boucle
-    mpz_t limit;    // Limite de la boucle
+    mpz_t index;
+    mpz_t limit;
 } LoopEntry;
 
-#endif
-// File d’attente pour les commandes
 #define QUEUE_SIZE 100
 typedef struct {
     char cmd[512];
     char nick[MAX_STRING_SIZE];
 } Command;
 
-// Structure Env pour le multi-utilisateur
 typedef struct Env {
     char nick[MAX_STRING_SIZE];
     Stack main_stack;
@@ -199,12 +196,12 @@ typedef struct Env {
     int queue_head;
     int queue_tail;
     pthread_mutex_t queue_mutex;
+    pthread_mutex_t in_use_mutex;
     pthread_t thread;
-    pthread_cond_t queue_cond;  // Nouvelle condition pour la file
-    pthread_mutex_t in_use_mutex;  // Mutex pour protéger in_use
-    int in_use;
-    int thread_running ; 
-    mpz_t mpz_pool[MPZ_POOL_SIZE]; // Ajouté ici
+    pthread_cond_t queue_cond;
+    int thread_running;
+    int being_freed;
+    mpz_t mpz_pool[MPZ_POOL_SIZE];
 } Env;
 
 struct irc_message {
@@ -214,13 +211,12 @@ struct irc_message {
     int arg_count;
 };
 
-extern volatile sig_atomic_t shutdown_flag; // Déclaré globalement
- 
+extern volatile sig_atomic_t shutdown_flag;
 
 #define SAFE_MALLOC(size) ({ \
     void *ptr = malloc(size); \
     if (!ptr) { \
-        send_to_channel("Fatal: Memory allocation failed"); \
+        fprintf(stderr, "Fatal: Memory allocation failed\n"); \
         pthread_kill(main_thread, SIGUSR1); \
     } \
     ptr; \
@@ -229,7 +225,7 @@ extern volatile sig_atomic_t shutdown_flag; // Déclaré globalement
 #define SAFE_REALLOC(ptr, size) ({ \
     void *new_ptr = realloc(ptr, size); \
     if (!new_ptr) { \
-        send_to_channel("Fatal: Memory reallocation failed"); \
+        fprintf(stderr, "Fatal: Memory reallocation failed\n"); \
         pthread_kill(main_thread, SIGUSR1); \
     } \
     new_ptr; \
@@ -237,53 +233,49 @@ extern volatile sig_atomic_t shutdown_flag; // Déclaré globalement
 
 void parse_irc_message(const char *line, struct irc_message *msg);
 void free_irc_message(struct irc_message *msg);
-int irc_handle_message(const char *line, char *bot_nick, int *registered, char *nick_out, char *cmd_out, size_t cmd_out_size) ;
-int irc_receive(char *buffer, size_t buffer_size, size_t *buffer_pos) ;
+int irc_handle_message(const char *line, char *bot_nick, int *registered, char *nick_out, char *cmd_out, size_t cmd_out_size);
+int irc_receive(char *buffer, size_t buffer_size, size_t *buffer_pos);
 void executeInstruction(Instruction instr, Stack *stack, long int *ip, CompiledWord *word, int word_index, Env *env);
 void executeCompiledWord(CompiledWord *word, Stack *stack, int word_index, Env *env);
 void compileToken(char *token, char **input_rest, Env *env);
 void interpret(char *input, Stack *stack, Env *env);
-
-
 void freeCurrentWord(Env *env);
 void print_word_definition_irc(int index, Stack *stack, Env *env);
 int findCompiledWordIndex(char *name, Env *env);
 void resizeDynamicDictionary(DynamicDictionary *dict);
 void initDynamicDictionary(DynamicDictionary *dict);
-void resizeCompiledWordArrays(CompiledWord *word, int is_code) ;
- 
+void resizeCompiledWordArrays(CompiledWord *word, int is_code);
 void initDictionary(Env *env);
- 
 Env *createEnv(const char *nick);
 void freeEnv(const char *nick);
 Env *findEnv(const char *nick);
 char *generate_image(const char *prompt);
-char *generate_image_tiny(const char *prompt) ; 
+char *generate_image_tiny(const char *prompt);
 size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp);
 size_t write_binary_callback(void *contents, size_t size, size_t nmemb, void *userp);
-
 void push(Env *env, mpz_t value);
 void pop(Env *env, mpz_t result);
 void push_string(Env *env, char *str);
-char *pop_string(Env *env) ;
+char *pop_string(Env *env);
 void set_error(Env *env, const char *msg);
-
-
 void enqueue(const char *cmd, const char *nick);
-void send_to_channel(const char *msg) ;
+void send_to_channel(const char *msg);
 void irc_connect(const char *server_ip, const char *bot_nick);
- 
 void *env_interpret_thread(void *arg);
- 
- Command *dequeue();
- 
- int irc_receive(char *buffer, size_t buffer_size, size_t *buffer_pos);
-  
- 
- extern Env *head;  // pointeur sur une liste chainée d'environnement 
- 
+Command *dequeue(Env *env);
+void *irc_sender_thread(void *arg);
+void enqueue_irc_msg(const char *msg);
+
+extern Env *head;
 extern char *channel;
 extern int irc_socket;
-extern pthread_mutex_t env_mutex;
+extern pthread_rwlock_t env_rwlock;
 extern pthread_mutex_t irc_mutex;
 extern pthread_t main_thread;
+extern IrcMessage irc_msg_queue[IRC_MSG_QUEUE_SIZE];
+extern int irc_msg_queue_head;
+extern int irc_msg_queue_tail;
+extern pthread_mutex_t irc_msg_queue_mutex;
+extern pthread_cond_t irc_msg_queue_cond;
+
+#endif
