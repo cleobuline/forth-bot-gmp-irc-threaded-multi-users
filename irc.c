@@ -1,4 +1,3 @@
-
 #include <pthread.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -12,10 +11,16 @@
 #include <gmp.h>
 #include <ctype.h>
 #include <curl/curl.h>
+#include <fcntl.h>
 #include "memory_forth.h"
 #include "forth_bot.h"
 
-// Implémentation personnalisée de memrchr
+pthread_mutex_t irc_msg_queue_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t irc_msg_queue_cond = PTHREAD_COND_INITIALIZER;
+IrcMessage irc_msg_queue[IRC_MSG_QUEUE_SIZE];
+int irc_msg_queue_head = 0;
+int irc_msg_queue_tail = 0;
+
 void *memrchr(const void *s, int c, size_t n) {
     const unsigned char *p = (const unsigned char *)s + n;
     while (p-- > (const unsigned char *)s) {
@@ -32,9 +37,9 @@ void parse_irc_message(const char *line, struct irc_message *msg) {
     msg->args = NULL;
     msg->arg_count = 0;
 
-    if (!line || !*line) return;
+    if (!line || !*line || strlen(line) > 2048) return;
 
-    char *copy = strdup(line);
+    char *copy = strndup(line, 2048);
     if (!copy) return;
 
     char *token;
@@ -68,6 +73,7 @@ void parse_irc_message(const char *line, struct irc_message *msg) {
 
     int arg_index = 0;
     while ((token = strtok_r(rest, " ", &rest))) {
+        if (arg_index >= max_args || strlen(token) > 512) continue;
         if (arg_index >= max_args) {
             max_args *= 2;
             char **new_args = SAFE_REALLOC(msg->args, max_args * sizeof(char *));
@@ -132,32 +138,36 @@ void irc_connect(const char *server_ip, const char *bot_nick) {
         return;
     }
 
+    fcntl(irc_socket, F_SETFL, O_NONBLOCK);
+
     struct sockaddr_in server_addr;
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(6667);
     server_addr.sin_addr.s_addr = inet_addr(server_ip);
 
     if (connect(irc_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        perror("connect");
-        close(irc_socket);
-        irc_socket = -1;
-        return;
+        if (errno != EINPROGRESS) {
+            perror("connect");
+            close(irc_socket);
+            irc_socket = -1;
+            return;
+        }
     }
 
     char buffer[512];
     snprintf(buffer, sizeof(buffer), "NICK %s\r\n", bot_nick);
     send(irc_socket, buffer, strlen(buffer), 0);
-
     snprintf(buffer, sizeof(buffer), "USER %s 0 * :%s\r\n", bot_nick, bot_nick);
     send(irc_socket, buffer, strlen(buffer), 0);
 }
- 
-// Envoie un chunk de message au canal IRC, avec vérification des tailles
+
 static int send_chunk(int socket, const char *channel, const char *msg, size_t len) {
     char buffer[512];
     size_t prefix_len = snprintf(buffer, sizeof(buffer), "PRIVMSG %s :", channel);
-    
-    // Vérifier que le préfixe et le message tiennent dans le buffer
+    if (prefix_len + len + 2 > 510) {
+        len = 510 - prefix_len;
+        while (len > 0 && (msg[len] & 0xC0) == 0x80) len--;
+    }
     if (prefix_len >= sizeof(buffer) - 3 || prefix_len + len + 2 >= sizeof(buffer)) {
         fprintf(stderr, "send_chunk: Message too long for buffer (prefix=%zu, len=%zu)\n", prefix_len, len);
         return -1;
@@ -176,74 +186,116 @@ static int send_chunk(int socket, const char *channel, const char *msg, size_t l
     return 0;
 }
 
-// Envoie un message au canal IRC avec segmentation sécurisée
 void send_to_channel(const char *msg) {
     if (irc_socket == -1) {
         fprintf(stderr, "send_to_channel: IRC socket not initialized\n");
         return;
     }
-    if (!msg || !*msg) {
-        return; // Rien à envoyer
+    if (!msg || !*msg) return;
+
+    if (strlen(msg) >= sizeof(irc_msg_queue[0].msg)) {
+        fprintf(stderr, "send_to_channel: Message too long (%zu bytes), truncating\n", strlen(msg));
     }
-
-    pthread_mutex_lock(&irc_mutex);
-    const size_t max_chunk = 400; // Limite IRC typique
-    size_t msg_len = strlen(msg);
-    size_t offset = 0;
-
-    while (offset < msg_len) {
-        size_t remaining = msg_len - offset;
-        size_t chunk_size = (remaining > max_chunk) ? max_chunk : remaining;
-
-        // Ajuster chunk_size pour couper à un espace si possible
-        if (chunk_size == max_chunk) {
-            const char *space = memrchr(msg + offset, ' ', chunk_size);
-            if (space) {
-                chunk_size = space - (msg + offset);
-            }
-        }
-
-        // Envoyer le chunk
-        if (send_chunk(irc_socket, channel, msg + offset, chunk_size) < 0) {
-            // Ne pas tenter de reconnecter ici pour éviter les problèmes de concurrence
-            pthread_mutex_unlock(&irc_mutex);
-            return;
-        }
-
-        offset += chunk_size;
-        // Sauter les espaces en début de prochain chunk
-        while (offset < msg_len && msg[offset] == ' ') {
-            offset++;
-        }
-    }
-
-    pthread_mutex_unlock(&irc_mutex);
+    enqueue_irc_msg(msg);
 }
- 
-// Nouvelle fonction : Recevoir les données IRC
+
+void enqueue_irc_msg(const char *msg) {
+    pthread_mutex_lock(&irc_msg_queue_mutex);
+    if ((irc_msg_queue_tail + 1) % IRC_MSG_QUEUE_SIZE != irc_msg_queue_head) {
+        strncpy(irc_msg_queue[irc_msg_queue_tail].msg, msg, sizeof(irc_msg_queue[irc_msg_queue_tail].msg) - 1);
+        irc_msg_queue[irc_msg_queue_tail].msg[sizeof(irc_msg_queue[irc_msg_queue_tail].msg) - 1] = '\0';
+        irc_msg_queue[irc_msg_queue_tail].used = 1;
+        irc_msg_queue_tail = (irc_msg_queue_tail + 1) % IRC_MSG_QUEUE_SIZE;
+        pthread_cond_signal(&irc_msg_queue_cond);
+    } else {
+        fprintf(stderr, "enqueue_irc_msg: IRC message queue full, message ignored: %s\n", msg);
+        send_to_channel("Warning: IRC message queue full, some messages may be lost");
+    }
+    pthread_mutex_unlock(&irc_msg_queue_mutex);
+}
+
+void *irc_sender_thread(void *arg) {
+    while (!shutdown_flag) {
+        pthread_mutex_lock(&irc_msg_queue_mutex);
+        while (irc_msg_queue_head == irc_msg_queue_tail && !shutdown_flag) {
+            pthread_cond_wait(&irc_msg_queue_cond, &irc_msg_queue_mutex);
+        }
+        if (shutdown_flag) {
+            pthread_mutex_unlock(&irc_msg_queue_mutex);
+            break;
+        }
+        IrcMessage msg = irc_msg_queue[irc_msg_queue_head];
+        irc_msg_queue_head = (irc_msg_queue_head + 1) % IRC_MSG_QUEUE_SIZE;
+        pthread_mutex_unlock(&irc_msg_queue_mutex);
+
+        if (msg.used) {
+            pthread_mutex_lock(&irc_mutex);
+            if (irc_socket != -1) {
+                const size_t max_chunk = 400;
+                size_t msg_len = strlen(msg.msg);
+                size_t offset = 0;
+
+                // fprintf(stderr, "irc_sender_thread: Sending message: %s\n", msg.msg);
+
+                while (offset < msg_len) {
+                    size_t remaining = msg_len - offset;
+                    size_t chunk_size = (remaining > max_chunk) ? max_chunk : remaining;
+
+                    if (chunk_size == max_chunk) {
+                        const char *space = memrchr(msg.msg + offset, ' ', chunk_size);
+                        if (space) {
+                            chunk_size = space - (msg.msg + offset);
+                        }
+                    }
+
+                    if (send_chunk(irc_socket, channel, msg.msg + offset, chunk_size) < 0) {
+                        fprintf(stderr, "irc_sender_thread: Failed to send chunk at offset %zu\n", offset);
+                        pthread_mutex_unlock(&irc_mutex);
+                        break;
+                    }
+
+                    offset += chunk_size;
+                    while (offset < msg_len && msg.msg[offset] == ' ') {
+                        offset++;
+                    }
+                }
+            } else {
+                fprintf(stderr, "irc_sender_thread: Socket not initialized, skipping message\n");
+            }
+            pthread_mutex_unlock(&irc_mutex);
+        }
+    }
+    return NULL;
+}
+
 int irc_receive(char *buffer, size_t buffer_size, size_t *buffer_pos) {
     if (irc_socket == -1) return -1;
     int bytes = recv(irc_socket, buffer + *buffer_pos, buffer_size - *buffer_pos - 1, 0);
-    if (bytes <= 0) {
-        if (bytes == -1 && errno == EINTR) {
+    if (bytes < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+        if (errno == EINTR) {
             printf("Receive interrupted by signal, continuing...\n");
-            return 0; // Ne pas considérer comme une déconnexion
+            return 0;
         }
-        printf("Disconnected: %s\n", bytes == 0 ? "closed by server" : strerror(errno));
+        printf("Disconnected: %s\n", strerror(errno));
+        return -1;
+    }
+    if (bytes == 0) {
+        printf("Disconnected: closed by server\n");
         return -1;
     }
     *buffer_pos += bytes;
     buffer[*buffer_pos] = '\0';
     return 0;
 }
-// Nouvelle fonction : Gérer les messages IRC standards
+
 int irc_handle_message(const char *line, char *bot_nick, int *registered, char *nick_out, char *cmd_out, size_t cmd_out_size) {
     struct irc_message msg = {0};
     parse_irc_message(line, &msg);
 
     if (!msg.command) {
         free_irc_message(&msg);
-        return 0; // Pas de commande, rien à faire
+        return 0;
     }
 
     if (strcmp(msg.command, "001") == 0) {
@@ -297,12 +349,12 @@ int irc_handle_message(const char *line, char *bot_nick, int *registered, char *
                     strncpy(cmd_out, trimmed_cmd, cmd_out_size - 1);
                     cmd_out[cmd_out_size - 1] = '\0';
                     free_irc_message(&msg);
-                    return 1; // Indique qu’un PRIVMSG Forth a été trouvé
+                    return 1;
                 }
             }
         }
     }
 
     free_irc_message(&msg);
-    return 0; // Pas un PRIVMSG Forth
+    return 0;
 }
