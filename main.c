@@ -12,30 +12,42 @@
 #include <ctype.h>
 #include <netdb.h>
 #include <curl/curl.h>
-
 #include "memory_forth.h"
 #include "forth_bot.h"
 
 Env *head = NULL;
 int irc_socket = -1;
-char *channel;
-
-
+char *channel = NULL;
 pthread_t main_thread;
+pthread_t irc_sender_thread_id;
 volatile sig_atomic_t shutdown_flag = 0;
-
-pthread_mutex_t irc_mutex = PTHREAD_MUTEX_INITIALIZER; // Définition avec initialisation statique
+pthread_mutex_t irc_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_rwlock_t env_rwlock = PTHREAD_RWLOCK_INITIALIZER;
 
 void handle_sigusr1(int sig) {
     shutdown_flag = 1;
 }
- 
+
+void init_globals(void) {
+    head = NULL;
+    irc_socket = -1;
+    channel = NULL;
+    shutdown_flag = 0;
+    irc_msg_queue_head = 0;
+    irc_msg_queue_tail = 0;
+    memset(irc_msg_queue, 0, sizeof(irc_msg_queue));
+    for (int i = 0; i < IRC_MSG_QUEUE_SIZE; i++) {
+        irc_msg_queue[i].used = 0;
+        irc_msg_queue[i].msg[0] = '\0';
+    }
+}
 
 int main(int argc, char *argv[]) {
     char *server_name = "labynet.fr";
     char bot_nick[512] = "forth";
-    channel = "#labynet";
+    char default_channel[] = "#labynet";
 
+    init_globals();
     main_thread = pthread_self();
 
     struct sigaction sa;
@@ -51,14 +63,22 @@ int main(int argc, char *argv[]) {
         server_name = argv[1];
         strncpy(bot_nick, argv[2], sizeof(bot_nick) - 1);
         bot_nick[sizeof(bot_nick) - 1] = '\0';
-        channel = argv[3];
-    } else if (argc != 1) {
+        channel = strdup(argv[3]);
+    } else if (argc == 1) {
+        channel = strdup(default_channel);
+    } else {
         printf("Usage: %s [server nick channel]\n", argv[0]);
+        return 1;
+    }
+
+    if (!channel) {
+        fprintf(stderr, "Failed to allocate memory for channel\n");
         return 1;
     }
 
     printf("Starting Forth IRC bot on %s with nick %s in channel %s\n", server_name, bot_nick, channel);
 
+    int reconnect_delay = 5;
     while (!shutdown_flag) {
         if (irc_socket == -1) {
             struct addrinfo hints, *res;
@@ -68,8 +88,9 @@ int main(int argc, char *argv[]) {
 
             int status = getaddrinfo(server_name, "6667", &hints, &res);
             if (status != 0) {
-                printf("getaddrinfo failed: %s, retrying in 5s...\n", gai_strerror(status));
-                sleep(5);
+                printf("getaddrinfo failed: %s, retrying in %ds...\n", gai_strerror(status), reconnect_delay);
+                sleep(reconnect_delay);
+                reconnect_delay = reconnect_delay * 2 > 60 ? 60 : reconnect_delay * 2;
                 continue;
             }
 
@@ -81,11 +102,20 @@ int main(int argc, char *argv[]) {
             freeaddrinfo(res);
 
             if (irc_socket == -1) {
-                printf("Connection failed, retrying in 5s...\n");
-                sleep(5);
+                printf("Connection failed, retrying in %ds...\n", reconnect_delay);
+                sleep(reconnect_delay);
+                reconnect_delay = reconnect_delay * 2 > 60 ? 60 : reconnect_delay * 2;
                 continue;
             }
             printf("Connected to %s\n", server_ip);
+            reconnect_delay = 5;
+
+            if (pthread_create(&irc_sender_thread_id, NULL, irc_sender_thread, NULL) != 0) {
+                printf("Failed to create IRC sender thread\n");
+                close(irc_socket);
+                irc_socket = -1;
+                return 1;
+            }
         }
 
         char buffer[4096];
@@ -95,6 +125,7 @@ int main(int argc, char *argv[]) {
         while (irc_socket != -1 && !shutdown_flag) {
             if (irc_receive(buffer, sizeof(buffer), &buffer_pos) == -1) {
                 printf("Disconnected from IRC, closing socket...\n");
+                close(irc_socket);
                 irc_socket = -1;
                 break;
             }
@@ -107,15 +138,18 @@ int main(int argc, char *argv[]) {
 
                 char nick[MAX_STRING_SIZE];
                 char cmd[512];
-                if (irc_handle_message(line, bot_nick, &registered, nick, cmd, sizeof(cmd))) { // Correction ici
-					if (strcmp(cmd, "QUIT") == 0) {
+                if (irc_handle_message(line, bot_nick, &registered, nick, cmd, sizeof(cmd))) {
+                    if (strcmp(cmd, "QUIT") == 0) {
                         Env *env = findEnv(nick);
                         if (env) {
-                            if (env->in_use) {
+                            pthread_mutex_lock(&env->queue_mutex);
+                            if (env->queue_head != env->queue_tail) {
                                 char quit_msg[512];
-                                snprintf(quit_msg, sizeof(quit_msg), "Operation impossible %s, essayez plus tard (opération en cours)", nick);
+                                snprintf(quit_msg, sizeof(quit_msg), "Operation impossible %s, try later (commands pending)", nick);
                                 send_to_channel(quit_msg);
+                                pthread_mutex_unlock(&env->queue_mutex);
                             } else {
+                                pthread_mutex_unlock(&env->queue_mutex);
                                 freeEnv(nick);
                                 char quit_msg[512];
                                 snprintf(quit_msg, sizeof(quit_msg), "Environment for %s has been freed.", nick);
@@ -124,7 +158,7 @@ int main(int argc, char *argv[]) {
                         } else {
                             send_to_channel("No environment found for you to quit.");
                         }
-                        } else if (strcmp(cmd, "EXIT") == 0) {
+                    } else if (strcmp(cmd, "EXIT") == 0) {
                         send_to_channel("Bot shutting down...");
                         while (head) {
                             Env *temp = head;
@@ -134,12 +168,9 @@ int main(int argc, char *argv[]) {
                             send_to_channel(quit_msg);
                             freeEnv(temp->nick);
                         }
-                        if (irc_socket != -1) {
-                            close(irc_socket);
-                            irc_socket = -1;
-                        }
-                        printf("Bot terminated cleanly.\n");
-                        return 0;
+                        shutdown_flag = 1;
+                        pthread_cond_broadcast(&irc_msg_queue_cond);
+                        break;
                     } else {
                         enqueue(cmd, nick);
                     }
@@ -164,19 +195,25 @@ int main(int argc, char *argv[]) {
 
     if (irc_socket != -1) {
         send_to_channel("Bot shutting down due to signal...");
-        while (head) {
-            Env *temp = head;
-            head = head->next;
-            char quit_msg[512];
-            snprintf(quit_msg, sizeof(quit_msg), "Environment for %s has been freed.", temp->nick);
-            send_to_channel(quit_msg);
-            freeEnv(temp->nick);
-        }
         close(irc_socket);
         irc_socket = -1;
+    }
+
+    while (head) {
+        Env *temp = head;
+        head = head->next;
+        char quit_msg[512];
+        snprintf(quit_msg, sizeof(quit_msg), "Environment for %s has been freed.", temp->nick);
+        send_to_channel(quit_msg);
+        freeEnv(temp->nick);
+    }
+
+    if (irc_sender_thread_id) {
+        pthread_join(irc_sender_thread_id, NULL);
+    }
+    if (channel) {
+        free(channel);
     }
     printf("Bot terminated cleanly.\n");
     return 0;
 }
-
-
