@@ -131,20 +131,16 @@ void irc_connect(const char *server_ip, const char *bot_nick) {
         close(irc_socket);
         irc_socket = -1;
     }
-
     irc_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (irc_socket == -1) {
         perror("socket");
         return;
     }
-
     fcntl(irc_socket, F_SETFL, O_NONBLOCK);
-
     struct sockaddr_in server_addr;
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(6667);
     server_addr.sin_addr.s_addr = inet_addr(server_ip);
-
     if (connect(irc_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
         if (errno != EINPROGRESS) {
             perror("connect");
@@ -152,14 +148,37 @@ void irc_connect(const char *server_ip, const char *bot_nick) {
             irc_socket = -1;
             return;
         }
+        // Attendre que la connexion soit établie
+        fd_set fdset;
+        FD_ZERO(&fdset);
+        FD_SET(irc_socket, &fdset);
+        struct timeval tv = { .tv_sec = 5, .tv_usec = 0 }; // Timeout de 5s
+        if (select(irc_socket + 1, NULL, &fdset, NULL, &tv) > 0) {
+            int so_error;
+            socklen_t len = sizeof(so_error);
+            getsockopt(irc_socket, SOL_SOCKET, SO_ERROR, &so_error, &len);
+            if (so_error != 0) {
+                fprintf(stderr, "connect failed: %s\n", strerror(so_error));
+                close(irc_socket);
+                irc_socket = -1;
+                return;
+            }
+        } else {
+            fprintf(stderr, "connect timeout\n");
+            close(irc_socket);
+            irc_socket = -1;
+            return;
+        }
     }
-
+    // Connexion établie, passer en mode bloquant pour simplifier
+    fcntl(irc_socket, F_SETFL, 0);
     char buffer[512];
     snprintf(buffer, sizeof(buffer), "NICK %s\r\n", bot_nick);
     send(irc_socket, buffer, strlen(buffer), 0);
     snprintf(buffer, sizeof(buffer), "USER %s 0 * :%s\r\n", bot_nick, bot_nick);
     send(irc_socket, buffer, strlen(buffer), 0);
 }
+ 
 
 static int send_chunk(int socket, const char *channel, const char *msg, size_t len) {
     char buffer[512];
