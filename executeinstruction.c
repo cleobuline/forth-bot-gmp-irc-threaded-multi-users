@@ -16,7 +16,7 @@
 void executeInstruction(Instruction instr, Stack *stack, long int *ip, CompiledWord *word, int word_index, Env *env) {
     if (!env || env->error_flag) return;
     mpz_t *a = &env->mpz_pool[0], *b = &env->mpz_pool[1], *result = &env->mpz_pool[2];
-    char temp_str[4096];
+ 
 unsigned long encoded_idx;
     unsigned long type;
     MemoryNode *node;
@@ -224,27 +224,80 @@ case OP_CALL:
         case OP_END:
             *ip = word->code_length;
             break;
-        case OP_DOT:
+case OP_DOT:
             pop(env, *a);
-            mpz_get_str(temp_str, 10, *a);
-            send_to_channel(temp_str);
+            // Utiliser un buffer dynamique pour la chaîne
+            char *num_str = mpz_get_str(NULL, 10, *a);
+            if (!num_str) {
+                set_error(env, "DOT: Memory allocation failed");
+                break;
+            }
+            // Envoyer la chaîne via send_to_channel, qui gère le découpage
+            send_to_channel(num_str);
+            free(num_str);
             break;
  
-        case OP_DOT_S:
-            if (stack->top >= 0) {
-                char stack_str[512] = "<";
-                char num_str[128];
-                snprintf(num_str, sizeof(num_str), "%ld", stack->top + 1);
-                strcat(stack_str, num_str);
-                strcat(stack_str, "> ");
-                for (int i = 0; i <= stack->top; i++) {
-                    mpz_get_str(num_str, 10, stack->data[i]);
-                    strcat(stack_str, num_str);
-                    if (i < stack->top) strcat(stack_str, " ");
-                }
-                send_to_channel(stack_str);
-            } else send_to_channel("<0>");
+case OP_DOT_S:
+    if (stack->top >= 0) {
+        // Utiliser un buffer dynamique pour stack_str
+        char *stack_str = (char *)malloc(1024);
+        if (!stack_str) {
+            set_error(env, "DOT_S: Memory allocation failed");
             break;
+        }
+        strcpy(stack_str, "<");
+        size_t stack_str_len = 1;
+        size_t stack_str_capacity = 1024;
+
+        // Ajouter la taille de la pile
+        char num_str[32];
+        snprintf(num_str, sizeof(num_str), "%ld", stack->top + 1);
+        size_t num_len = strlen(num_str);
+        if (stack_str_len + num_len + 2 >= stack_str_capacity) {
+            stack_str_capacity *= 2;
+            stack_str = (char *)SAFE_REALLOC(stack_str, stack_str_capacity);
+            if (!stack_str) {
+                set_error(env, "DOT_S: Memory allocation failed");
+                break;
+            }
+        }
+        strcat(stack_str, num_str);
+        strcat(stack_str, "> ");
+        stack_str_len += num_len + 2;
+
+        // Ajouter chaque élément de la pile
+        for (int i = 0; i <= stack->top; i++) {
+            // Utiliser mpz_get_str avec un buffer dynamique
+            char *num_str_dynamic = mpz_get_str(NULL, 10, stack->data[i]);
+            if (!num_str_dynamic) {
+                free(stack_str);
+                set_error(env, "DOT_S: Memory allocation failed");
+                break;
+            }
+            num_len = strlen(num_str_dynamic);
+            if (stack_str_len + num_len + 2 >= stack_str_capacity) {
+                stack_str_capacity = stack_str_len + num_len + 1024;
+                stack_str = (char *)SAFE_REALLOC(stack_str, stack_str_capacity);
+                if (!stack_str) {
+                    free(num_str_dynamic);
+                    set_error(env, "DOT_S: Memory allocation failed");
+                    break;
+                }
+            }
+            strcat(stack_str, num_str_dynamic);
+            stack_str_len += num_len;
+            if (i < stack->top) {
+                strcat(stack_str, " ");
+                stack_str_len++;
+            }
+            free(num_str_dynamic);
+        }
+        send_to_channel(stack_str);
+        free(stack_str);
+    } else {
+        send_to_channel("<0>");
+    }
+    break;
 case OP_EMIT:
     if (stack->top >= 0) {
         pop(env, *a);
@@ -1137,15 +1190,13 @@ case OP_IMAGE:
         push(env, *a);
     }
     break;
-        	case OP_CLEAR_STRINGS:
-    if (strcmp(word->name, "CLEAR-STRINGS") == 0) {
+    case OP_CLEAR_STRINGS:
+     
         for (int i = 0; i <= env->string_stack_top; i++) {
             if (env->string_stack[i]) free(env->string_stack[i]);
         }
         env->string_stack_top = -1;
-    } else {
-        stack->top = -1;
-    }
+     
     break;
  
     case OP_DELAY:
