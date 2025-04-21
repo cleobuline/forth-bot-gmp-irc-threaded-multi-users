@@ -76,6 +76,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+
     printf("Starting Forth IRC bot on %s with nick %s in channel %s\n", server_name, bot_nick, channel);
 
     int reconnect_delay = 5;
