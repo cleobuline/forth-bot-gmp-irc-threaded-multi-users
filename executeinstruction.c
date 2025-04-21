@@ -1238,6 +1238,47 @@ case OP_RECURSE:
     mpz_set_si(*result, (long int)(tv.tv_sec * 1000 + tv.tv_usec / 1000)); // Millisecondes
     push(env, *result);
     break;
+    case OP_APPEND:
+    if (stack->top < 1) {
+        set_error(env, "APPEND: Pile insuffisante");
+        break;
+    }
+    pop(env, *b); // Indice du nom de fichier
+    pop(env, *a); // Indice du texte
+    if (!mpz_fits_slong_p(*a) || !mpz_fits_slong_p(*b)) {
+        set_error(env, "APPEND: Indices de pile de chaînes invalides");
+        push(env, *a);
+        push(env, *b);
+        break;
+    }
+    int text_idx = mpz_get_si(*a);
+    int file_idx = mpz_get_si(*b);
+    if (text_idx < 0 || text_idx > env->string_stack_top || file_idx < 0 || file_idx > env->string_stack_top) {
+        set_error(env, "APPEND: Indices de pile de chaînes hors limites");
+        push(env, *a);
+        push(env, *b);
+        break;
+    }
+    char *text = env->string_stack[text_idx];
+    char *filename = env->string_stack[file_idx];
+    if (!text || !filename) {
+        set_error(env, "APPEND: Chaîne nulle dans la pile de chaînes");
+        push(env, *a);
+        push(env, *b);
+        break;
+    }
+    FILE *file = fopen(filename, "a");
+    if (!file) {
+        char error_msg[512];
+        snprintf(error_msg, sizeof(error_msg), "APPEND: Impossible d'ouvrir le fichier '%s'", filename);
+        set_error(env, error_msg);
+        push(env, *a);
+        push(env, *b);
+        break;
+    }
+    fprintf(file, "%s\n", text);
+    fclose(file);
+    break;
         default:
             set_error(env,"Unknown opcode");
             break;
