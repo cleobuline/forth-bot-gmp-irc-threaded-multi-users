@@ -339,6 +339,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
         else if (strcmp(token, "~") == 0) instr.opcode = OP_BIT_NOT;
         else if (strcmp(token, "<<") == 0) instr.opcode = OP_LSHIFT;
         else if (strcmp(token, ">>") == 0) instr.opcode = OP_RSHIFT;
+        else if (strcmp(token, "APPEND") == 0) instr.opcode = OP_APPEND;
         else if (strcmp(token, ".\"") == 0) {
             char *start = *input_rest;
             char *end = strchr(start, '"');
@@ -414,11 +415,11 @@ void compileToken(char *token, char **input_rest, Env *env) {
             }
             return;
         }
-        else if (strcmp(token, "\"") == 0) {
+        else if (strcmp(token, "S") == 0) {
             char *start = *input_rest;
-            char *end = strchr(start, '"');
+            char *end = strstr(start, " S ");
             if (!end) {
-                set_error(env, "Missing closing quote for \"");
+                set_error(env, "S expects a string ending with S");
                 env->compile_error = 1;
                 return;
             }
@@ -436,7 +437,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
                 resizeCodeArray(env, &env->currentWord);
             }
             env->currentWord.code[env->currentWord.code_length++] = instr;
-            *input_rest = end + 1;
+            *input_rest = end + 3; // Passe " S " (2 caractères pour " S" + 1 espace)
             while (**input_rest == ' ' || **input_rest == '\t') (*input_rest)++;
             return;
         }
@@ -867,11 +868,11 @@ void compileToken(char *token, char **input_rest, Env *env) {
             strtok_r(NULL, " \t\n", input_rest);
             return;
         }
-        else if (strcmp(token, "\"") == 0) {
+        else if (strcmp(token, "S\"") == 0) {
             char *start = *input_rest;
-            char *end = strchr(start, '"');
+            char *end = strstr(start, "\"S");
             if (!end) {
-                set_error(env, "Missing closing quote for \"");
+                set_error(env, " S\" expects a string ending with \"S");
                 return;
             }
             long int len = end - start;
@@ -881,7 +882,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
             push_string(env, str);
             mpz_set_si(env->mpz_pool[0], env->string_stack_top);
             push(env, env->mpz_pool[0]);
-            *input_rest = end + 1;
+            *input_rest = end + 3; // Passe " S " (2 caractères pour " S" )
             while (**input_rest == ' ' || **input_rest == '\t') (*input_rest)++;
             char *next_token = strtok_r(NULL, " \t\n", input_rest);
             if (next_token) compileToken(next_token, input_rest, env);
@@ -955,6 +956,11 @@ void compileToken(char *token, char **input_rest, Env *env) {
 
             mpz_clear(value);
             *input_rest = NULL;
+            return;
+        }
+        else if (strcmp(token, "APPEND") == 0) {
+            instr.opcode = OP_APPEND;
+            executeInstruction(instr, &env->main_stack, NULL, NULL, -1, env);
             return;
         }
         else {
