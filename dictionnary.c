@@ -473,4 +473,3 @@ void initDictionary(Env *env) {
     addWord(&env->dictionary, "MICRO", OP_MICRO, 0);
     addWord(&env->dictionary, "MILLI", OP_MILLI, 0);
 }
- 
