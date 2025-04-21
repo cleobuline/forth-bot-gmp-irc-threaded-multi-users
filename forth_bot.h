@@ -6,10 +6,10 @@
 
 #define STACK_SIZE 1000
 #define WORD_CODE_SIZE 512
-#define CONTROL_STACK_SIZE 100
+#define CONTROL_STACK_SIZE 500
 #define MAX_STRING_SIZE 256
 #define MPZ_POOL_SIZE 3
-#define BUFFER_SIZE 4096
+#define BUFFER_SIZE 8000
 #define SERVER "46.16.175.175"
 #define PORT 6667
 #define BOT_NAME "mforth"
@@ -100,12 +100,13 @@ typedef enum {
     OP_RECURSE,
     OP_CONSTANT,
     OP_MICRO,
-    OP_MILLI
+    OP_MILLI,
+    OP_APPEND
 } OpCode;
 
-#define IRC_MSG_QUEUE_SIZE 100
+#define IRC_MSG_QUEUE_SIZE 500
 typedef struct {
-    char msg[4096];
+    char msg[8000];
     int used;
 } IrcMessage;
 
