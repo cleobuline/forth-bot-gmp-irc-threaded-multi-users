@@ -36,6 +36,7 @@ void enqueue(const char *cmd, const char *nick) {
     pthread_mutex_unlock(&env->queue_mutex);
 }
 
+
 Command *dequeue(Env *env) {
     if (!env || env->being_freed) return NULL;
 
