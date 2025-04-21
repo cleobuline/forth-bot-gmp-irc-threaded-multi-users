@@ -18,6 +18,7 @@
 pthread_mutex_t irc_msg_queue_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t irc_msg_queue_cond = PTHREAD_COND_INITIALIZER;
 IrcMessage irc_msg_queue[IRC_MSG_QUEUE_SIZE];
+
 int irc_msg_queue_head = 0;
 int irc_msg_queue_tail = 0;
 
@@ -183,8 +184,8 @@ void irc_connect(const char *server_ip, const char *bot_nick) {
 static int send_chunk(int socket, const char *channel, const char *msg, size_t len) {
     char buffer[512];
     size_t prefix_len = snprintf(buffer, sizeof(buffer), "PRIVMSG %s :", channel);
-    if (prefix_len + len + 2 > 510) {
-        len = 510 - prefix_len;
+    if (prefix_len + len + 2 > 492) {
+        len = 492 - prefix_len;
         while (len > 0 && (msg[len] & 0xC0) == 0x80) len--;
     }
     if (prefix_len >= sizeof(buffer) - 3 || prefix_len + len + 2 >= sizeof(buffer)) {
@@ -277,6 +278,7 @@ void *irc_sender_thread(void *arg) {
                     while (offset < msg_len && msg.msg[offset] == ' ') {
                         offset++;
                     }
+                    usleep(400000);
                 }
             } else {
                 fprintf(stderr, "irc_sender_thread: Socket not initialized, skipping message\n");
