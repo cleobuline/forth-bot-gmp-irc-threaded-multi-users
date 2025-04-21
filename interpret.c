@@ -47,6 +47,8 @@ void *env_interpret_thread(void *arg) {
     return NULL;
 }
 
+
+
 void interpret(char *input, Stack *stack, Env *env) {
     if (!env) {
         send_to_channel("DEBUG: env is NULL");
