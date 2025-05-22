@@ -3,9 +3,9 @@
 
 #include <pthread.h>
 #include <signal.h>
-
+#include "uthash.h"
 #define STACK_SIZE 1000
-#define WORD_CODE_SIZE 512
+#define WORD_CODE_SIZE 1024
 #define CONTROL_STACK_SIZE 500
 #define MAX_STRING_SIZE 256
 #define MPZ_POOL_SIZE 3
@@ -31,6 +31,8 @@ typedef enum {
     OP_TO_R,
     OP_FROM_R,
     OP_R_FETCH,
+    OP_R_FETCH_UL,   
+    OP_R_STORE_UL,   
     OP_SEE,
     OP_2DROP,
     OP_EQ,
@@ -80,7 +82,6 @@ typedef enum {
     OP_WORDS,
     OP_LOAD,
     OP_PICK,
-    OP_ROLL,
     OP_PLUSSTORE,
     OP_DEPTH,
     OP_TOP,
@@ -88,6 +89,7 @@ typedef enum {
     OP_CREATE,
     OP_STRING,
     OP_QUOTE,
+    OP_QUOTE_END,
     OP_PRINT,
     OP_NUM_TO_BIN,
     OP_PRIME_TEST,
@@ -101,10 +103,11 @@ typedef enum {
     OP_CONSTANT,
     OP_MICRO,
     OP_MILLI,
+    OP_ROLL,
     OP_APPEND
 } OpCode;
 
-#define IRC_MSG_QUEUE_SIZE 500
+#define IRC_MSG_QUEUE_SIZE 2000
 typedef struct {
     char msg[8000];
     int used;
@@ -170,12 +173,18 @@ typedef struct {
     char cmd[512];
     char nick[MAX_STRING_SIZE];
 } Command;
+typedef struct {
+    char *name;               // Clé (nom du mot)
+    int index;                // Valeur (index dans dictionary.words)
+    UT_hash_handle hh;        // Handle requis par uthash
+} WordHash;
 
 typedef struct Env {
     char nick[MAX_STRING_SIZE];
     Stack main_stack;
     Stack return_stack;
     LoopEntry loop_stack[LOOP_STACK_SIZE];
+    long int loop_nesting_level;
     int loop_stack_top;
     DynamicDictionary dictionary;
     MemoryList memory_list;
@@ -203,8 +212,9 @@ typedef struct Env {
     int thread_running;
     int being_freed;
     mpz_t mpz_pool[MPZ_POOL_SIZE];
+    WordHash *word_hash;      // Nouvelle table de hachage pour les mots
 } Env;
-
+ 
 struct irc_message {
     char *prefix;
     char *command;
@@ -278,5 +288,6 @@ extern int irc_msg_queue_head;
 extern int irc_msg_queue_tail;
 extern pthread_mutex_t irc_msg_queue_mutex;
 extern pthread_cond_t irc_msg_queue_cond;
-
+void addWordToHash(Env *env, const char *name, int index);
+void removeWordFromHash(Env *env, const char *name);
 #endif
