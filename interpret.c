@@ -49,7 +49,7 @@ void *env_interpret_thread(void *arg) {
 
 
 
-void interpret(char *input, Stack *stack, Env *env) {
+void interpret(char *input, Stack *stack __attribute__((unused)), Env *env) {
     if (!env) {
         send_to_channel("DEBUG: env is NULL");
         return;
