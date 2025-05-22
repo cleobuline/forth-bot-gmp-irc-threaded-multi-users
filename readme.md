@@ -23,8 +23,8 @@ sudo apt-get install gcc
   - Ubuntu : `sudo apt-get install libcurl4-openssl-dev`
 - **Bibliothèques standard C** : Inclues dans `libc6-dev` (généralement déjà installé).
   - Ubuntu : `sudo apt-get install libc6-dev`
-  - 
- 
+- **Bibliothèques uthash  
+ sudo wget https://raw.githubusercontent.com/troydhanson/uthash/master/src/uthash.h -O /usr/include/uthash.h
 ## Fonctionnalités
 
 - **Interpréteur Forth** : Exécute des commandes Forth comme `WORDS`, `5 3 +`, `NUM-TO-BIN`, ou `" monster" IMAGE ( need a space after " ) .
