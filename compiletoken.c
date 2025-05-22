@@ -1,3 +1,4 @@
+
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -9,9 +10,9 @@
 #include <time.h>
 #include <ctype.h>
 #include "memory_forth.h"
+#include "forth_bot.h"
 #include <netdb.h>
 #include <curl/curl.h>
-#include "forth_bot.h"
 
 // Fonctions utilitaires pour redimensionner les tableaux dynamiques
 static void resizeCodeArray(Env* env, CompiledWord *word) {
@@ -34,6 +35,18 @@ static void resizeStringArray(Env *env, CompiledWord *word) {
     }
     word->strings = new_strings;
     word->string_capacity = new_capacity;
+}
+
+static void resizeDynamicBuffer(Env *env, char **buffer, size_t *capacity, size_t required) {
+    size_t new_capacity = *capacity ? *capacity * 2 : 1024;
+    while (new_capacity < required) new_capacity *= 2;
+    char *new_buffer = (char *)SAFE_REALLOC(*buffer, new_capacity);
+    if (!new_buffer) {
+        set_error(env, "Failed to resize dynamic buffer");
+        return;
+    }
+    *buffer = new_buffer;
+    *capacity = new_capacity;
 }
 
 void executeCompiledWord(CompiledWord *word, Stack *stack, int word_index, Env *env) {
@@ -83,6 +96,8 @@ void compileToken(char *token, char **input_rest, Env *env) {
             env->dictionary.words[dict_idx].string_capacity = 1;
             env->dictionary.words[dict_idx].string_count = 0;
             env->dictionary.words[dict_idx].immediate = 0;
+            // Ajouter à la table de hachage
+            addWordToHash(env, next_token, dict_idx);
             if (env->compiling) {
                 instr.opcode = OP_STRING;
                 instr.operand = env->currentWord.string_count;
@@ -130,6 +145,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
         if (existing_idx >= 0) {
             env->current_word_index = existing_idx;
             freeCurrentWord(env);  // Libère l’ancienne définition
+            removeWordFromHash(env, next_token); // Supprimer de la table de hachage
         } else {
             env->current_word_index = env->dictionary.count;
             if (env->dictionary.count >= env->dictionary.capacity) resizeDynamicDictionary(&env->dictionary);
@@ -165,6 +181,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
             env->compile_error = 1;
             env->control_stack_top = 0;
             env->compiling = 0;
+            freeCurrentWord(env);
             return;
         }
         instr.opcode = OP_END;
@@ -190,6 +207,8 @@ void compileToken(char *token, char **input_rest, Env *env) {
             dict_word->string_count = env->currentWord.string_count;
             dict_word->string_capacity = env->currentWord.string_capacity;
             dict_word->immediate = env->currentWord.immediate;
+            // Ajouter à la table de hachage
+            addWordToHash(env, dict_word->name, env->current_word_index);
         } else {
             set_error(env, "Dictionary index out of bounds");
             env->compile_error = 1;
@@ -214,7 +233,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
         env->currentWord.immediate = 0;
         return;
     }
- 
+
     // Récursion
     if (strcmp(token, "RECURSE") == 0) {
         if (!env->compiling) {
@@ -230,7 +249,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
         env->currentWord.code[env->currentWord.code_length++] = instr;
         return;
     }
- 
+
     // Affichage d’une définition avec SEE
     if (strcmp(token, "SEE") == 0) {
         char *next_token = strtok_r(NULL, " \t\n", input_rest);
@@ -279,6 +298,8 @@ void compileToken(char *token, char **input_rest, Env *env) {
         else if (strcmp(token, ">R") == 0) instr.opcode = OP_TO_R;
         else if (strcmp(token, "R>") == 0) instr.opcode = OP_FROM_R;
         else if (strcmp(token, "R@") == 0) instr.opcode = OP_R_FETCH;
+        else if (strcmp(token, "R@UL") == 0) instr.opcode = OP_R_FETCH_UL;
+        else if (strcmp(token, "R!UL") == 0) instr.opcode = OP_R_STORE_UL;
         else if (strcmp(token, "I") == 0) instr.opcode = OP_I;
         else if (strcmp(token, "J") == 0) instr.opcode = OP_J;
         else if (strcmp(token, "DO") == 0) {
@@ -330,6 +351,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
         else if (strcmp(token, "EXIT") == 0) instr.opcode = OP_EXIT;
         else if (strcmp(token, "CLOCK") == 0) instr.opcode = OP_CLOCK;
         else if (strcmp(token, "CLEAR-STACK") == 0) instr.opcode = OP_CLEAR_STACK;
+        else if (strcmp(token, "ROLL") == 0) instr.opcode = OP_ROLL;
         else if (strcmp(token, "WORDS") == 0) instr.opcode = OP_WORDS;
         else if (strcmp(token, "NUM-TO-BIN") == 0) instr.opcode = OP_NUM_TO_BIN;
         else if (strcmp(token, "PRIME?") == 0) instr.opcode = OP_PRIME_TEST;
@@ -340,6 +362,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
         else if (strcmp(token, "<<") == 0) instr.opcode = OP_LSHIFT;
         else if (strcmp(token, ">>") == 0) instr.opcode = OP_RSHIFT;
         else if (strcmp(token, "APPEND") == 0) instr.opcode = OP_APPEND;
+        else if (strcmp(token, "DEPTH") == 0) instr.opcode = OP_DEPTH;
         else if (strcmp(token, ".\"") == 0) {
             char *start = *input_rest;
             char *end = strchr(start, '"');
@@ -399,6 +422,8 @@ void compileToken(char *token, char **input_rest, Env *env) {
                 word->string_capacity = 1;
                 word->string_count = 0;
                 word->immediate = 0;
+                removeWordFromHash(env, next_token);
+                addWordToHash(env, next_token, existing_idx);
             } else {
                 if (env->dictionary.count >= env->dictionary.capacity) resizeDynamicDictionary(&env->dictionary);
                 int dict_idx = env->dictionary.count++;
@@ -412,6 +437,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
                 env->dictionary.words[dict_idx].string_capacity = 1;
                 env->dictionary.words[dict_idx].string_count = 0;
                 env->dictionary.words[dict_idx].immediate = 0;
+                addWordToHash(env, next_token, dict_idx);
             }
             return;
         }
@@ -437,7 +463,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
                 resizeCodeArray(env, &env->currentWord);
             }
             env->currentWord.code[env->currentWord.code_length++] = instr;
-            *input_rest = end + 3; // Passe " S " (2 caractères pour " S" + 1 espace)
+            *input_rest = end + 3;
             while (**input_rest == ' ' || **input_rest == '\t') (*input_rest)++;
             return;
         }
@@ -710,37 +736,50 @@ void compileToken(char *token, char **input_rest, Env *env) {
             filename[sizeof(filename) - 1] = '\0';
             FILE *file = fopen(filename, "r");
             if (file) {
-                char full_buffer[8000] = "";
+                char *dynamic_buffer = NULL;
+                size_t buffer_capacity = 0;
+                size_t buffer_length = 0;
                 char line_buffer[1024];
-                size_t full_len = 0;
                 int compiling = 0;
 
                 while (fgets(line_buffer, sizeof(line_buffer), file)) {
                     line_buffer[strcspn(line_buffer, "\n")] = '\0';
                     size_t line_len = strlen(line_buffer);
-                    if (full_len + line_len + 1 >= sizeof(full_buffer)) {
-                        set_error(env, "LOAD: File too large for buffer");
-                        break;
+                    size_t required_size = buffer_length + line_len + (buffer_length > 0 ? 1 : 0) + 1;
+
+                    if (required_size > buffer_capacity) {
+                        resizeDynamicBuffer(env, &dynamic_buffer, &buffer_capacity, required_size);
+                        if (env->error_flag) {
+                            free(dynamic_buffer);
+                            fclose(file);
+                            return;
+                        }
                     }
-                    if (full_len > 0) {
-                        full_buffer[full_len++] = ' ';
+
+                    if (buffer_length > 0) {
+                        dynamic_buffer[buffer_length++] = ' ';
                     }
-                    strcpy(full_buffer + full_len, line_buffer);
-                    full_len += line_len;
+                    strcpy(dynamic_buffer + buffer_length, line_buffer);
+                    buffer_length += line_len;
+
                     if (strstr(line_buffer, ";")) {
                         if (!compiling || (compiling && env->control_stack_top == 0)) {
-                            interpret(full_buffer, &env->main_stack, env);
-                            full_buffer[0] = '\0';
-                            full_len = 0;
+                            dynamic_buffer[buffer_length] = '\0';
+                            interpret(dynamic_buffer, &env->main_stack, env);
+                            buffer_length = 0;
                             compiling = 0;
                         }
                     } else if (strstr(line_buffer, ":")) {
                         compiling = 1;
                     }
                 }
-                if (full_len > 0) {
-                    interpret(full_buffer, &env->main_stack, env);
+
+                if (buffer_length > 0) {
+                    dynamic_buffer[buffer_length] = '\0';
+                    interpret(dynamic_buffer, &env->main_stack, env);
                 }
+
+                free(dynamic_buffer);
                 fclose(file);
             } else {
                 char error_msg[1024];
@@ -789,6 +828,8 @@ void compileToken(char *token, char **input_rest, Env *env) {
                     mpz_set_ui(node->value.array.data[0], 0);
                     node->value.array.size = 1;
                 }
+                removeWordFromHash(env, next_token);
+                addWordToHash(env, next_token, existing_idx);
             } else {
                 if (env->dictionary.count >= env->dictionary.capacity) resizeDynamicDictionary(&env->dictionary);
                 int dict_idx = env->dictionary.count++;
@@ -809,6 +850,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
                     mpz_set_ui(node->value.array.data[0], 0);
                     node->value.array.size = 1;
                 }
+                addWordToHash(env, next_token, dict_idx);
             }
             return;
         }
@@ -842,6 +884,8 @@ void compileToken(char *token, char **input_rest, Env *env) {
                 word->string_capacity = 1;
                 word->string_count = 0;
                 word->immediate = 0;
+                removeWordFromHash(env, next_token);
+                addWordToHash(env, next_token, existing_idx);
             } else {
                 if (env->dictionary.count >= env->dictionary.capacity) resizeDynamicDictionary(&env->dictionary);
                 int dict_idx = env->dictionary.count++;
@@ -855,6 +899,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
                 env->dictionary.words[dict_idx].string_capacity = 1;
                 env->dictionary.words[dict_idx].string_count = 0;
                 env->dictionary.words[dict_idx].immediate = 0;
+                addWordToHash(env, next_token, dict_idx);
             }
             return;
         }
@@ -882,7 +927,7 @@ void compileToken(char *token, char **input_rest, Env *env) {
             push_string(env, str);
             mpz_set_si(env->mpz_pool[0], env->string_stack_top);
             push(env, env->mpz_pool[0]);
-            *input_rest = end + 3; // Passe " S " (2 caractères pour " S" )
+            *input_rest = end + 3;
             while (**input_rest == ' ' || **input_rest == '\t') (*input_rest)++;
             char *next_token = strtok_r(NULL, " \t\n", input_rest);
             if (next_token) compileToken(next_token, input_rest, env);
@@ -954,6 +999,9 @@ void compileToken(char *token, char **input_rest, Env *env) {
             word->string_count = 0;
             word->immediate = 0;
 
+            removeWordFromHash(env, next_token);
+            addWordToHash(env, next_token, existing_idx >= 0 ? existing_idx : dict_idx);
+
             mpz_clear(value);
             *input_rest = NULL;
             return;
@@ -983,3 +1031,4 @@ void compileToken(char *token, char **input_rest, Env *env) {
         }
     }
 }
+ 
