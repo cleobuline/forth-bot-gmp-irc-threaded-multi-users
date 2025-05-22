@@ -24,7 +24,7 @@ volatile sig_atomic_t shutdown_flag = 0;
 pthread_mutex_t irc_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_rwlock_t env_rwlock = PTHREAD_RWLOCK_INITIALIZER;
 
-void handle_sigusr1(int sig) {
+void handle_sigusr1(int ) {
     shutdown_flag = 1;
 }
 
