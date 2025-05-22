@@ -132,6 +132,25 @@ case OP_TO_R:
             if (env->return_stack.top >= 0) push(env, env->return_stack.data[env->return_stack.top]);
             else set_error(env,"R@: Return stack underflow");
             break;
+
+    case OP_R_FETCH_UL:
+    if (env->loop_nesting_level >= 0 && env->return_stack.top >= 3 * env->loop_nesting_level) {
+        long int offset = 3 * env->loop_nesting_level;
+        push(env, env->return_stack.data[env->return_stack.top - offset]);
+    } else {
+        set_error(env, "R@UL: Return stack underflow or invalid nesting level");
+    }
+    break;
+
+case OP_R_STORE_UL:
+    if (env->loop_nesting_level >= 0 && env->return_stack.top >= 3 * env->loop_nesting_level) {
+        long int offset = 3 * env->loop_nesting_level;
+        pop(env, *a);
+        mpz_set(env->return_stack.data[env->return_stack.top - offset], *a);
+    } else {
+        set_error(env, "R!UL: Return stack underflow or invalid nesting level");
+    }
+    break;
         case OP_SEE:
        
     if (env->compiling || word_index >= 0) { // Mode compilé ou dans une définition
@@ -398,17 +417,18 @@ case OP_STORE:
         }
         pop(env, *a); // offset
         pop(env, *b); // valeur
-        int offset = mpz_get_si(*a);
+        unsigned long  offset = mpz_get_si(*a);
          /*  snprintf(debug_msg, sizeof(debug_msg), "STORE: Array operation on %s, offset=%d, value=%s", node->name, offset, mpz_get_str(NULL, 10, *b));
         send_to_channel(debug_msg);
         */
-        if (offset >= 0 && offset < node->value.array.size) {
+        if (  offset < node->value.array.size) {
             mpz_set(node->value.array.data[offset], *b);
             /* snprintf(debug_msg, sizeof(debug_msg), "STORE: Set %s[%d] = %s", node->name, offset, mpz_get_str(NULL, 10, *b));
             send_to_channel(debug_msg);
             */ 
         } else {
-            snprintf(debug_msg, sizeof(debug_msg), "STORE: Array index %d out of bounds (size=%lu)", offset, node->value.array.size);
+			snprintf(debug_msg, sizeof(debug_msg), "STORE: Array index %lu out of bounds (size=%lu)", offset, node->value.array.size);     
+
             set_error(env,debug_msg);
             push(env, *b);
             push(env, *a);
@@ -430,6 +450,7 @@ case OP_STORE:
                     env->string_stack[i] = env->string_stack[i + 1];
                 }
                 env->string_stack[env->string_stack_top--] = NULL;
+                free (str);
                 /* snprintf(debug_msg, sizeof(debug_msg), "STORE: Set %s = %s", node->name, str);
                 send_to_channel(debug_msg);
                 */ 
@@ -483,19 +504,19 @@ case OP_FETCH:
             break;
         }
         pop(env, *a); // offset (ex. 5)
-        int offset = mpz_get_si(*a);
+        unsigned long  offset = mpz_get_si(*a);
         /* snprintf(debug_msg, sizeof(debug_msg), "FETCH: Array offset=%d", offset);
         send_to_channel(debug_msg);
         */
-        if (offset >= 0 && offset < node->value.array.size) {
+        if (  offset < node->value.array.size) {
             mpz_set(*result, node->value.array.data[offset]);
             /* snprintf(debug_msg, sizeof(debug_msg), "FETCH: Got %s[%d] = %s", node->name, offset, mpz_get_str(NULL, 10, *result));
             send_to_channel(debug_msg);
             */ 
             push(env, *result);
         } else {
-            snprintf(debug_msg, sizeof(debug_msg), "FETCH: Array index %d out of bounds (size=%lu)", offset, node->value.array.size);
-            set_error(env,debug_msg);
+snprintf(debug_msg, sizeof(debug_msg), "FETCH: Array index %lu out of bounds (size=%lu)", offset, node->value.array.size);            
+set_error(env,debug_msg);
             push(env, *a);
             push(env, *result);
         }
@@ -576,6 +597,7 @@ case OP_DO:
         push(env, *b);
         break;
     }
+    env->loop_nesting_level++; // Incrémenter le niveau d'imbrication
     env->return_stack.top++;
     mpz_set(env->return_stack.data[env->return_stack.top], *a); // limite
     env->return_stack.top++;
@@ -595,6 +617,7 @@ case OP_LOOP:
         *ip = instr.operand - 1; // Retour à l'instruction après DO
     } else {
         env->return_stack.top -= 3; // Dépiler limit, index, addr
+        env->loop_nesting_level--; // Décrémenter le niveau d'imbrication
     }
     break;
 
@@ -640,12 +663,14 @@ case OP_PLUS_LOOP:
             *ip = instr.operand - 1; // Retour à DO
         } else {
             env->return_stack.top -= 3;
+            env->loop_nesting_level--; // Décrémenter le niveau d'imbrication
         }
     } else {
         if (mpz_cmp(*index, *limit) > 0) {
             *ip = instr.operand - 1; // Retour à DO
         } else {
             env->return_stack.top -= 3;
+            env->loop_nesting_level--; // Décrémenter le niveau d'imbrication
         }
     }
     break;
@@ -777,14 +802,24 @@ case OP_REPEAT:
             mpz_fdiv_q_2exp(*result, *a, mpz_get_ui(*b));
             push(env, *result);
             break;
+ 
+ 
+
 case OP_FORGET:
     if (instr.operand >= 0 && instr.operand < word->string_count && word->strings[instr.operand]) {
         char *word_to_forget = word->strings[instr.operand];
-        int forget_idx = findCompiledWordIndex(word_to_forget,env);
+        int forget_idx = findCompiledWordIndex(word_to_forget, env);
         if (forget_idx >= 0) {
+             
             // Parcourir tous les mots à partir de forget_idx jusqu’à la fin du dictionnaire
             for (int i = forget_idx; i < env->dictionary.count; i++) {
                 CompiledWord *dict_word = &env->dictionary.words[i];
+
+                // Supprimer de la table de hachage
+                if (dict_word->name) {
+                    removeWordFromHash(env, dict_word->name);
+                  
+                }
 
                 // Vérifier si le mot est une variable, une chaîne ou un tableau et libérer la mémoire associée
                 if (dict_word->code_length == 1 && dict_word->code[0].opcode == OP_PUSH) {
@@ -839,15 +874,17 @@ case OP_FORGET:
         } else {
             char msg[512];
             snprintf(msg, sizeof(msg), "FORGET: Unknown word: %s", word_to_forget);
-            set_error(env,msg);
+            set_error(env, msg);
         }
     } else {
-        set_error(env,"FORGET: Invalid word name");
+        set_error(env, "FORGET: Invalid word name");
     }
     break;
+
+ 
 case OP_WORDS:
     if (env->dictionary.count > 0) {
-        char words_msg[2048] = "";
+        char words_msg[4090] = "";
         size_t remaining = sizeof(words_msg) - 1;
         for (int i = 0; i < env->dictionary.count && remaining > 1; i++) {
             if (env->dictionary.words[i].name) {
@@ -879,26 +916,13 @@ break ;
             if (stack->top >= n) push(env, stack->data[stack->top - n]);
             else set_error(env,"PICK: Stack underflow");
             break;
-        case OP_ROLL:
-            pop(env, *a);
-            int zozo = mpz_get_si(*a);
-            if (stack->top >= zozo) {
-                mpz_t temp[zozo + 1];
-                for (int i = 0; i <= zozo; i++) {
-                    mpz_init(temp[i]);
-                    pop(env, temp[i]);
-                }
-                for (int i = zozo - 1; i >= 0; i--) push(env, temp[i]);
-                mpz_clear(temp[zozo]);
-                for (int i = 0; i < zozo; i++) mpz_clear(temp[i]);
-            } else set_error(env,"ROLL: Stack underflow");
-            break;
+
 case OP_PLUSSTORE:
     if (stack->top < 1) {
         set_error(env,"+!: Stack underflow");
         break;
     }
-    pop(env, *a); // encoded_idx (ex. 268435456 pour ZOZO)
+    pop(env, *a); // encoded_idx  
     if (stack->top < 0) {
         set_error(env,"+!: Stack underflow for value");
         push(env, *a);
@@ -1076,6 +1100,9 @@ case OP_QUOTE:
         set_error(env,"QUOTE: Invalid string index");
     }
     break;
+case OP_QUOTE_END:
+//do nothing
+break;
     /* Ancienne version 
 case OP_PRINT:
     pop(env, *a);
@@ -1237,6 +1264,37 @@ case OP_RECURSE:
     gettimeofday(&tv, NULL);
     mpz_set_si(*result, (long int)(tv.tv_sec * 1000 + tv.tv_usec / 1000)); // Millisecondes
     push(env, *result);
+    break;
+case OP_ROLL:
+    if (stack->top < 0) {
+        set_error(env, "ROLL: Stack underflow");
+        env->error_flag = 1;
+        break;
+    }
+    pop(env, *a); // Récupère n
+    long int zozo = mpz_get_si(*a);
+
+    if (zozo < 0 || zozo > stack->top) {
+        set_error(env, "ROLL: Invalid index");
+        env->error_flag = 1;
+        push(env, *a);
+        break;
+    }
+    if (zozo == 0) {
+        break; // Rien à faire pour n=0
+    }
+    // Sauvegarder l'élément à la position n
+    mpz_t temp;
+    mpz_init(temp);
+    mpz_set(temp, stack->data[stack->top - zozo]); // Élément à top-zozo
+    // Décaler les éléments vers le bas
+    for (long int i = stack->top - zozo; i < stack->top; i++) {
+        mpz_set(stack->data[i], stack->data[i + 1]);
+    }
+    // Placer l'élément au sommet
+    mpz_set(stack->data[stack->top], temp);
+
+    mpz_clear(temp);
     break;
     case OP_APPEND:
     if (stack->top < 1) {
