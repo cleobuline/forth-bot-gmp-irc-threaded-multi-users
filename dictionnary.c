@@ -15,6 +15,68 @@
 #include "forth_bot.h"
 
 
+
+// Initialiser la table de hachage
+void initWordHash(Env *env) {
+    env->word_hash = NULL;
+}
+
+// Ajouter un mot à la table de hachage
+void addWordToHash(Env *env, const char *name, int index) {
+    WordHash *entry = (WordHash *)SAFE_MALLOC(sizeof(WordHash));
+    if (!entry) {
+        send_to_channel("Erreur : Échec de l’allocation pour WordHash");
+        return;
+    }
+    entry->name = strdup(name);
+    if (!entry->name) {
+        free(entry);
+        send_to_channel("Erreur : Échec de l’allocation pour le nom dans WordHash");
+        return;
+    }
+    entry->index = index;
+    HASH_ADD_STR(env->word_hash, name, entry);
+    //char msg[512];
+    //snprintf(msg, sizeof(msg), "DEBUG: Added '%s' at index %d to hash table", name, index);
+    //send_to_channel(msg);
+}
+
+int findCompiledWordIndex(char *name, Env *env) {
+    if (!env || !name) {
+        //char msg[512];
+        //snprintf(msg, sizeof(msg), "DEBUG: findCompiledWordIndex failed: env=%p, name=%s", (void *)env, name ? name : "(null)");
+        //send_to_channel(msg);
+        return -1;
+    }
+    WordHash *entry;
+    HASH_FIND_STR(env->word_hash, name, entry);
+    //char msg[512];
+    //snprintf(msg, sizeof(msg), "DEBUG: Searched '%s', found %s, index=%d", name, entry ? "yes" : "no", entry ? entry->index : -1);
+    // send_to_channel(msg);
+    return entry ? entry->index : -1;
+}
+
+// Supprimer un mot de la table de hachage
+void removeWordFromHash(Env *env, const char *name) {
+    WordHash *entry;
+    HASH_FIND_STR(env->word_hash, name, entry);
+    if (entry) {
+        HASH_DEL(env->word_hash, entry);
+        free(entry->name);
+        free(entry);
+    }
+}
+
+// Libérer toute la table de hachage
+void freeWordHash(Env *env) {
+    WordHash *entry, *tmp;
+    HASH_ITER(hh, env->word_hash, entry, tmp) {
+        HASH_DEL(env->word_hash, entry);
+        free(entry->name);
+        free(entry);
+    }
+    env->word_hash = NULL;
+}
 void freeCurrentWord(Env *env) {
     if (env->currentWord.name) {
         free(env->currentWord.name);
@@ -49,26 +111,26 @@ void initDynamicDictionary(DynamicDictionary *dict) {
         exit(1);
     }
 
-    for (long int i = 0; i < dict->capacity; i++) {
-        dict->words[i].name = NULL;
-        dict->words[i].code_length = 0;
-        dict->words[i].code_capacity = 16;
-        dict->words[i].code = (Instruction *)calloc(dict->words[i].code_capacity, sizeof(Instruction));
-        dict->words[i].string_count = 0;
-        dict->words[i].string_capacity = 16;
-        dict->words[i].strings = (char **)calloc(dict->words[i].string_capacity, sizeof(char *));
-        dict->words[i].immediate = 0;
-
-        if (!dict->words[i].code || !dict->words[i].strings) {
-            send_to_channel("Erreur : Échec de l’initialisation des tableaux dans CompiledWord");
-            for (long int j = 0; j < i; j++) {
-                free(dict->words[j].code);
-                free(dict->words[j].strings);
-            }
-            free(dict->words);
-            exit(1);
+for (long int i = 0; i < dict->capacity; i++) {
+    dict->words[i].name = NULL;
+    dict->words[i].code_length = 0;
+    dict->words[i].code_capacity = 16;
+    dict->words[i].code = (Instruction *)calloc(dict->words[i].code_capacity, sizeof(Instruction));
+    dict->words[i].string_count = 0;
+    dict->words[i].string_capacity = 16;
+    dict->words[i].strings = (char **)calloc(dict->words[i].string_capacity, sizeof(char *));
+    dict->words[i].immediate = 0;
+    if (!dict->words[i].code || !dict->words[i].strings) {
+        // Gestion d'erreur
+        for (long int j = 0; j < i; j++) {
+            free(dict->words[j].code);
+            free(dict->words[j].strings);
         }
+        free(dict->words);
+        send_to_channel("Erreur : Échec de l’initialisation des tableaux dans CompiledWord");
+        exit(1);
     }
+}
 }
  
  
@@ -115,21 +177,22 @@ void resizeDynamicDictionary(DynamicDictionary *dict) {
         dict->words[i].strings = (char **)calloc(dict->words[i].string_capacity, sizeof(char *));
         dict->words[i].immediate = 0;
 
-        if (!dict->words[i].code || !dict->words[i].strings) {
-            send_to_channel("Error: Failed to allocate arrays in resizeDynamicDictionary ");
-            for (long int j = dict->count; j < i; j++) {
-                free(dict->words[j].code);
-                free(dict->words[j].strings);
-            }
-            return;  // Abandonne sans exit
-        }
+if (!dict->words[i].code || !dict->words[i].strings) {
+    send_to_channel("Error: Failed to allocate arrays in resizeDynamicDictionary");
+    for (long int j = dict->count; j < i; j++) {
+        free(dict->words[j].code);
+        free(dict->words[j].strings);
+    }
+    free(new_words);
+    return;
+}
     }
     dict->capacity = new_capacity;
 }
  
  
  
-void addWord(DynamicDictionary *dict, const char *name, OpCode opcode, int immediate) {
+void addWord(DynamicDictionary *dict, const char *name, OpCode opcode, int immediate, Env *env) {
     if (dict->count >= dict->capacity) {
         resizeDynamicDictionary(dict);
     }
@@ -161,9 +224,13 @@ void addWord(DynamicDictionary *dict, const char *name, OpCode opcode, int immed
         if (word->strings) free(word->strings);
         return;
     }
+
+    // Ajouter à la table de hachage
+    addWordToHash(env, name, dict->count);
     dict->count++;
 }
-int findCompiledWordIndex(char *name, Env *env) {
+
+int findCompiledWordIndex_old(char *name, Env *env) {
     if (!env) return -1;
     for (long int i = 0; i < env->dictionary.count; i++) {
         if (env->dictionary.words[i].name && strcmp(env->dictionary.words[i].name, name) == 0) {
@@ -172,8 +239,8 @@ int findCompiledWordIndex(char *name, Env *env) {
     }
     return -1;
 }
-
-void print_word_definition_irc(int index, Stack *stack, Env *env) {
+ 
+void print_word_definition_irc(int index,Stack *stack __attribute__((unused)), Env *env) {
     if (!env || index < 0 || index >= env->dictionary.count) {
         send_to_channel("SEE: Unknown word");
         return;
@@ -268,6 +335,8 @@ void print_word_definition_irc(int index, Stack *stack, Env *env) {
             case OP_R_FETCH: snprintf(instr_str, sizeof(instr_str), "R@ "); break;
             case OP_I: snprintf(instr_str, sizeof(instr_str), "I "); break;
             case OP_J: snprintf(instr_str, sizeof(instr_str), "J "); break;
+            case OP_R_FETCH_UL: snprintf(instr_str, sizeof(instr_str), "R@UL "); break;
+            case OP_R_STORE_UL: snprintf(instr_str, sizeof(instr_str), "R!UL "); break;
             case OP_BRANCH_FALSE:
                 snprintf(instr_str, sizeof(instr_str), "IF ");
                 if (if_top < 64) {
@@ -405,71 +474,80 @@ void print_word_definition_irc(int index, Stack *stack, Env *env) {
 }
  
 void initDictionary(Env *env) {
-    addWord(&env->dictionary, ".S", OP_DOT_S, 0);
-    addWord(&env->dictionary, ".", OP_DOT, 0);
-    addWord(&env->dictionary, "+", OP_ADD, 0);
-    addWord(&env->dictionary, "-", OP_SUB, 0);
-    addWord(&env->dictionary, "*", OP_MUL, 0);
-    addWord(&env->dictionary, "/", OP_DIV, 0);
-    addWord(&env->dictionary, "MOD", OP_MOD, 0);
-    addWord(&env->dictionary, "DUP", OP_DUP, 0);
-    addWord(&env->dictionary, "DROP", OP_DROP, 0);
-    addWord(&env->dictionary, "SWAP", OP_SWAP, 0);
-    addWord(&env->dictionary, "OVER", OP_OVER, 0);
-    addWord(&env->dictionary, "ROT", OP_ROT, 0);
-    addWord(&env->dictionary, ">R", OP_TO_R, 0);
-    addWord(&env->dictionary, "R>", OP_FROM_R, 0);
-    addWord(&env->dictionary, "R@", OP_R_FETCH, 0);
-    addWord(&env->dictionary, "=", OP_EQ, 0);
-    addWord(&env->dictionary, "<", OP_LT, 0);
-    addWord(&env->dictionary, ">", OP_GT, 0);
-    addWord(&env->dictionary, "AND", OP_AND, 0);
-    addWord(&env->dictionary, "OR", OP_OR, 0);
-    addWord(&env->dictionary, "NOT", OP_NOT, 0);
-    addWord(&env->dictionary, "XOR", OP_XOR, 0);
-    addWord(&env->dictionary, "&", OP_BIT_AND, 0);
-    addWord(&env->dictionary, "|", OP_BIT_OR, 0);
-    addWord(&env->dictionary, "^", OP_BIT_XOR, 0);
-    addWord(&env->dictionary, "~", OP_BIT_NOT, 0);
-    addWord(&env->dictionary, "<<", OP_LSHIFT, 0);
-    addWord(&env->dictionary, ">>", OP_RSHIFT, 0);
-    addWord(&env->dictionary, "CR", OP_CR, 0);
-    addWord(&env->dictionary, "EMIT", OP_EMIT, 0);
-    addWord(&env->dictionary, "VARIABLE", OP_VARIABLE, 0);
-    addWord(&env->dictionary, "@", OP_FETCH, 0);
-    addWord(&env->dictionary, "!", OP_STORE, 0);
-    addWord(&env->dictionary, "+!", OP_PLUSSTORE, 0);
-    addWord(&env->dictionary, "DO", OP_DO, 0);
-    addWord(&env->dictionary, "LOOP", OP_LOOP, 0);
-    addWord(&env->dictionary, "I", OP_I, 0);
-    addWord(&env->dictionary, "WORDS", OP_WORDS, 0);
-     addWord(&env->dictionary, "LOAD", OP_LOAD, 0);
-    addWord(&env->dictionary, "CREATE", OP_CREATE, 0);
-    addWord(&env->dictionary, "ALLOT", OP_ALLOT, 0);
-    addWord(&env->dictionary, ".\"", OP_DOT_QUOTE, 0);
-    addWord(&env->dictionary, "CLOCK", OP_CLOCK, 0);
-    addWord(&env->dictionary, "BEGIN", OP_BEGIN, 0);
-    addWord(&env->dictionary, "WHILE", OP_WHILE, 0);
-    addWord(&env->dictionary, "REPEAT", OP_REPEAT, 0);
-    addWord(&env->dictionary, "AGAIN", OP_AGAIN, 0);
-    // addWord(&env->dictionary, "RECURSE", OP_CALL, 1);
-    addWord(&env->dictionary, "SQRT", OP_SQRT, 0);
-    addWord(&env->dictionary, "UNLOOP", OP_UNLOOP, 0);
-    addWord(&env->dictionary, "+LOOP", OP_PLUS_LOOP, 0);
-    addWord(&env->dictionary, "PICK", OP_PICK, 0);
-    addWord(&env->dictionary, "CLEAR-STACK", OP_CLEAR_STACK, 0);
-    addWord(&env->dictionary, "PRINT", OP_PRINT, 0);
-    addWord(&env->dictionary, "NUM-TO-BIN", OP_NUM_TO_BIN, 0);
-    addWord(&env->dictionary, "PRIME?", OP_PRIME_TEST, 0);
-    addWord(&env->dictionary, "FORGET", OP_FORGET, 1);
-    addWord(&env->dictionary, "STRING", OP_STRING, 1);
-    addWord(&env->dictionary, "\"", OP_QUOTE, 0);
-    addWord(&env->dictionary, "2DROP", OP_2DROP, 0);
-    addWord(&env->dictionary, "IMAGE", OP_IMAGE, 0);
-    addWord(&env->dictionary, "TEMP-IMAGE", OP_TEMP_IMAGE, 0);
-    addWord(&env->dictionary, "CLEAR-STRINGS", OP_CLEAR_STRINGS, 0);
-    addWord(&env->dictionary, "DELAY", OP_DELAY, 0);
-    addWord(&env->dictionary, "EXIT", OP_EXIT, 0);
-    addWord(&env->dictionary, "MICRO", OP_MICRO, 0);
-    addWord(&env->dictionary, "MILLI", OP_MILLI, 0);
+    addWord(&env->dictionary, ".S", OP_DOT_S, 0,env);
+    addWord(&env->dictionary, ".", OP_DOT, 0,env);
+    addWord(&env->dictionary, "+", OP_ADD, 0,env);
+    addWord(&env->dictionary, "-", OP_SUB, 0,env);
+    addWord(&env->dictionary, "*", OP_MUL, 0,env);
+    addWord(&env->dictionary, "/", OP_DIV, 0,env);
+    addWord(&env->dictionary, "MOD", OP_MOD, 0,env);
+    addWord(&env->dictionary, "DUP", OP_DUP, 0,env);
+    addWord(&env->dictionary, "DROP", OP_DROP, 0,env);
+    addWord(&env->dictionary, "SWAP", OP_SWAP, 0,env);
+    addWord(&env->dictionary, "OVER", OP_OVER, 0,env);
+    addWord(&env->dictionary, "ROT", OP_ROT, 0,env);
+    addWord(&env->dictionary, ">R", OP_TO_R, 0,env);
+    addWord(&env->dictionary, "R>", OP_FROM_R, 0,env);
+    addWord(&env->dictionary, "R@", OP_R_FETCH, 0,env);
+    addWord(&env->dictionary, "R@UL", OP_R_FETCH_UL, 0,env);
+    addWord(&env->dictionary, "R!UL", OP_R_STORE_UL, 0,env);
+    addWord(&env->dictionary, "=", OP_EQ, 0,env);
+    addWord(&env->dictionary, "<", OP_LT, 0,env);
+    addWord(&env->dictionary, ">", OP_GT, 0,env);
+    addWord(&env->dictionary, "AND", OP_AND, 0,env);
+    addWord(&env->dictionary, "OR", OP_OR, 0,env);
+    addWord(&env->dictionary, "NOT", OP_NOT, 0,env);
+    addWord(&env->dictionary, "XOR", OP_XOR, 0,env);
+    addWord(&env->dictionary, "&", OP_BIT_AND, 0,env);
+    addWord(&env->dictionary, "|", OP_BIT_OR, 0,env);
+    addWord(&env->dictionary, "^", OP_BIT_XOR, 0,env);
+    addWord(&env->dictionary, "~", OP_BIT_NOT, 0,env);
+    addWord(&env->dictionary, "<<", OP_LSHIFT, 0,env);
+    addWord(&env->dictionary, ">>", OP_RSHIFT, 0,env);
+    addWord(&env->dictionary, "CR", OP_CR, 0,env);
+    addWord(&env->dictionary, "EMIT", OP_EMIT, 0,env);
+    addWord(&env->dictionary, "VARIABLE", OP_VARIABLE, 0,env);
+    addWord(&env->dictionary, "@", OP_FETCH, 0,env);
+    addWord(&env->dictionary, "!", OP_STORE, 0,env);
+    addWord(&env->dictionary, "+!", OP_PLUSSTORE, 0,env);
+    addWord(&env->dictionary, "DO", OP_DO, 0,env);
+    addWord(&env->dictionary, "LOOP", OP_LOOP, 0,env);
+    addWord(&env->dictionary, "I", OP_I, 0,env);
+    addWord(&env->dictionary, "WORDS", OP_WORDS, 0,env);
+     addWord(&env->dictionary, "LOAD", OP_LOAD, 0,env);
+    addWord(&env->dictionary, "CREATE", OP_CREATE, 0,env);
+    addWord(&env->dictionary, "ALLOT", OP_ALLOT, 0,env);
+    addWord(&env->dictionary, ".\"", OP_DOT_QUOTE, 0,env);
+    addWord(&env->dictionary, "CLOCK", OP_CLOCK, 0,env);
+    addWord(&env->dictionary, "BEGIN", OP_BEGIN, 0,env);
+    addWord(&env->dictionary, "WHILE", OP_WHILE, 0,env);
+    addWord(&env->dictionary, "REPEAT", OP_REPEAT, 0,env);
+    addWord(&env->dictionary, "AGAIN", OP_AGAIN, 0,env);
+    // addWord(&env->dictionary, "RECURSE", OP_CALL, 1,env);
+    addWord(&env->dictionary, "SQRT", OP_SQRT, 0,env);
+    addWord(&env->dictionary, "UNLOOP", OP_UNLOOP, 0,env);
+    addWord(&env->dictionary, "+LOOP", OP_PLUS_LOOP, 0,env);
+    addWord(&env->dictionary, "PICK", OP_PICK, 0,env);
+    addWord(&env->dictionary, "CLEAR-STACK", OP_CLEAR_STACK, 0,env);
+    addWord(&env->dictionary, "PRINT", OP_PRINT, 0,env);
+    addWord(&env->dictionary, "NUM-TO-BIN", OP_NUM_TO_BIN, 0,env);
+    addWord(&env->dictionary, "PRIME?", OP_PRIME_TEST, 0,env);
+    addWord(&env->dictionary, "FORGET", OP_FORGET, 1,env);
+    addWord(&env->dictionary, "STRING", OP_STRING, 1,env);
+    addWord(&env->dictionary, "S\"", OP_QUOTE, 0,env);
+    addWord(&env->dictionary, "\"S", OP_QUOTE_END, 0,env);
+    addWord(&env->dictionary, "2DROP", OP_2DROP, 0,env);
+    addWord(&env->dictionary, "IMAGE", OP_IMAGE, 0,env);
+    addWord(&env->dictionary, "TEMP-IMAGE", OP_TEMP_IMAGE, 0,env);
+    addWord(&env->dictionary, "CLEAR-STRINGS", OP_CLEAR_STRINGS, 0,env);
+    addWord(&env->dictionary, "DELAY", OP_DELAY, 0,env);
+    addWord(&env->dictionary, "EXIT", OP_EXIT, 0,env);
+    addWord(&env->dictionary, "CONSTANT", OP_CONSTANT, 0,env);
+    addWord(&env->dictionary, "MICRO", OP_MICRO, 0,env);
+    addWord(&env->dictionary, "MILLI", OP_MILLI, 0,env);
+    addWord(&env->dictionary, "ROLL", OP_ROLL, 0,env);
+    addWord(&env->dictionary, "DEPTH", OP_DEPTH, 0,env);
+    addWord(&env->dictionary, "APPEND", OP_APPEND, 0,env);
+    
 }
+ 
