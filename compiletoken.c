@@ -264,7 +264,8 @@ void compileToken(char *token, char **input_rest, Env *env) {
         } else {
             char msg[512];
             snprintf(msg, sizeof(msg), "SEE: Unknown word: %s", next_token);
-            send_to_channel(msg);
+            //send_to_channel(msg);
+            set_error(env, msg );
             env->compile_error = 1;
         }
         return;
@@ -1020,11 +1021,11 @@ void compileToken(char *token, char **input_rest, Env *env) {
                 mpz_init(test_num);
                 if (mpz_set_str(test_num, token, 10) == 0) {
                     push(env, test_num);
-                } else {
-                    char msg[512];
-                    snprintf(msg, sizeof(msg), "Unknown word: %s", token);
-                    send_to_channel(msg);
-                }
+             } else {
+            char msg[512];
+            snprintf(msg, sizeof(msg), "Unknown word: %s", token);
+            set_error(env, msg); // Utiliser set_error
+        }
                 mpz_clear(test_num);
             }
             return;
