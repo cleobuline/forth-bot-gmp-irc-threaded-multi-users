@@ -234,7 +234,7 @@ void enqueue_irc_msg(const char *msg) {
     pthread_mutex_unlock(&irc_msg_queue_mutex);
 }
 
-void *irc_sender_thread(void *arg) {
+void *irc_sender_thread(void *arg __attribute__((unused))) {
     while (!shutdown_flag) {
         pthread_mutex_lock(&irc_msg_queue_mutex);
         while (irc_msg_queue_head == irc_msg_queue_tail && !shutdown_flag) {
