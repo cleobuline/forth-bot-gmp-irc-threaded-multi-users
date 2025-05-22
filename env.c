@@ -5,9 +5,7 @@
 #include <stdlib.h>
 #include "memory_forth.h"
 #include "forth_bot.h"
-
- 
-
+void initWordHash(Env *env);
 void enqueue(const char *cmd, const char *nick) {
     Env *env = findEnv(nick);
     if (!env) {
@@ -35,7 +33,6 @@ void enqueue(const char *cmd, const char *nick) {
     }
     pthread_mutex_unlock(&env->queue_mutex);
 }
-
 
 Command *dequeue(Env *env) {
     if (!env || env->being_freed) return NULL;
@@ -73,7 +70,7 @@ static void initEnv(Env *env, const char *nick) {
     env->being_freed = 0;
     strncpy(env->nick, nick, MAX_STRING_SIZE - 1);
     env->nick[MAX_STRING_SIZE - 1] = '\0';
-
+	env->loop_nesting_level=0 ; // Niveau d'imbrication des boucles
     env->main_stack.top = -1;
     env->return_stack.top = -1;
     for (int i = 0; i < STACK_SIZE; i++) {
@@ -85,6 +82,7 @@ static void initEnv(Env *env, const char *nick) {
     }
 
     initDynamicDictionary(&env->dictionary);
+    initWordHash(env); // Initialiser la table de hachage
     memory_init(&env->memory_list);
 
     unsigned long username_idx = memory_create(&env->memory_list, "USERNAME", TYPE_STRING);
@@ -102,6 +100,7 @@ static void initEnv(Env *env, const char *nick) {
             env->dictionary.words[dict_idx].code_length = 1;
             env->dictionary.words[dict_idx].string_count = 0;
             env->dictionary.words[dict_idx].immediate = 0;
+            addWordToHash(env, "USERNAME", dict_idx);
         }
     }
 
@@ -159,6 +158,7 @@ Env *createEnv(const char *nick) {
     head = new_env;
     pthread_rwlock_unlock(&env_rwlock);
 
+    fprintf(stderr, "Created Env for %s\n", nick); // Log de débogage
     return new_env;
 }
 
@@ -183,11 +183,9 @@ void freeEnv(const char *nick) {
     pthread_mutex_lock(&curr->queue_mutex);
     if (curr->queue_head != curr->queue_tail) {
         char err_msg[512];
-        snprintf(err_msg, sizeof(err_msg), "Cannot free environment for %s: commands are pending", nick);
+        snprintf(err_msg, sizeof(err_msg), "Warning: Clearing pending commands for %s to free environment", nick);
         send_to_channel(err_msg);
-        curr->being_freed = 0;
-        pthread_mutex_unlock(&curr->queue_mutex);
-        return;
+        curr->queue_head = curr->queue_tail; // Vider la file
     }
     curr->thread_running = 0;
     pthread_cond_broadcast(&curr->queue_cond);
@@ -247,6 +245,7 @@ void freeEnv(const char *nick) {
         send_to_channel(err_msg);
     }
 
+    fprintf(stderr, "Freed Env for %s\n", nick);
     free(curr);
 }
 
