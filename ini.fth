@@ -368,6 +368,8 @@ CALC-YEARS CALC-MONTHS CALC-DAY
   ." Illumination "  NUM-TO-STR ." %"  CR 
   2DROP 2DROP  2DROP   2DROP 
 ;
+: TREC ( n -- ) DUP 0 <= IF EXIT THEN DUP . 1 - RECURSE ;
+
 : QUOTE DUP  1 = IF  ." When we are dead we do not know that we are dead. It is for others that it is difficult. When we are jerk it is the same - Jean Claude Vandamme - " CR
 ELSE THEN DUP  2 = IF ." Every second laugh is a little time saved on existence -Raphaël Quenard-" CR ELSE THEN 
 3 = IF ." The difference between a genius and an idiot? The genius knows he is an idiot, but the idiot does not care. - Anonymous -" CR ELSE THEN ;
