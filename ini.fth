@@ -148,21 +148,20 @@ VARIABLE YEAR
 VARIABLE MONTH 
 VARIABLE DAY
 : LEAP-YEAR? DUP 4 MOD 0 = IF DUP 100 MOD 0 = IF 400 MOD 0 = EXIT THEN DROP 1 EXIT THEN DROP 0 ;
-: MONTH-NAME ( n -- )
- DUP 1 = IF ." January" EXIT THEN
- DUP 2 = IF ." February" EXIT THEN
- DUP 3 = IF ." March" EXIT THEN
- DUP 4 = IF ." April" EXIT THEN
- DUP 5 = IF ." May" EXIT THEN
- DUP 6 = IF ." June" EXIT THEN
- DUP 7 = IF ." July" EXIT THEN
- DUP 8 = IF ." August" EXIT THEN
- DUP 9 = IF ." September" EXIT THEN
- DUP 10 = IF ." October" EXIT THEN
- DUP 11 = IF ." November" EXIT THEN
- DUP 12 = IF ." December" EXIT THEN
- DROP ." Unknown" ;
- 
+ : MONTH-NAME CASE 1 OF ." January"   ENDOF 
+2 OF ." February"   ENDOF 
+3 OF ." March"    ENDOF 
+4 OF ." April"  ENDOF 
+5 OF ." May"  ENDOF 
+6 OF ." June"  ENDOF 
+7 OF ." July"  ENDOF 
+8 OF ." August" ENDOF 
+9 OF ." September"   ENDOF 
+10 OF ." October"  ENDOF 
+11 OF  ." November" ENDOF 
+12 OF ." December" ENDOF 
+." Others "   ENDCASE ;
+
 : ZELLER ( month year -- day )
  >R
  DUP 3 < IF
