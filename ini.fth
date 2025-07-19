@@ -88,27 +88,31 @@ INIT-RANDOM
 : INIT-STARS 12 0 DO I 1 + I STARS ! LOOP 0 COUNT ! ;
 : SHUFFLE-STARS 12 1 DO 0 I RAND DUP STARS @ I STARS @ SWAP I STARS ! OVER STARS ! DROP LOOP ;
 : PICK-STAR COUNT @ DUP 12 < IF STARS @ COUNT @ 1 + COUNT ! ELSE DROP 1 THEN ;
-: EURO INIT-RANDOM 50 INIT-NUMS 
- 50 SHUFFLE-NUMS 5 0 DO PICK-NUM DUP NUM-TO-STR 32 EMIT
- DROP LOOP INIT-STARS SHUFFLE-STARS PICK-STAR DUP NUM-TO-STR 32 EMIT
- DROP PICK-STAR DUP NUM-TO-STR DROP DROP DROP CR ;
+: EURO INIT-RANDOM   INIT-NUMS 
+  SHUFFLE-NUMS 5 0 DO PICK-NUM   NUM-TO-STR 32 EMIT
+   LOOP INIT-STARS SHUFFLE-STARS PICK-STAR   NUM-TO-STR 32 EMIT
+   PICK-STAR   NUM-TO-STR       CR ;
  : DIE 1 6 RAND ; 
  : ROLLDICE DIE DIE DIE .S CLEAR-STACK ; 
  
 : TRIPLE DUP DUP + + ;
 : POW2 DUP 0 = IF DROP DROP 1 . EXIT THEN DUP 1 = IF DROP . EXIT THEN 1 PICK SWAP 1 - 0 DO 1 PICK * LOOP SWAP DROP . ;
-: TEST-CASE CASE 1 OF ." UN " CR ENDOF 2 OF ." DEUX " CR ENDOF 3 OF ." TROIS " CR ENDOF ." Others " CR ENDCASE ;
+: TEST-CASE CASE 1 OF ." UN " CR ENDOF 
+2 OF ." DEUX " CR ENDOF 
+3 OF ." TROIS " CR ENDOF 
+." Others " CR ENDCASE ;
+
 : FACTLOOP 1 + DUP 0 = IF DROP 1 EXIT THEN DUP 1 = IF DROP 1 EXIT THEN 1 SWAP 1 DO I * LOOP ;
 : HELLO ." Hello " USERNAME @ PRINT ."  How are you ? " CR ;
 : MACRON ." Macron est un saint homme ! " CR ;
-( : TEST-DELAY COUNT ! BEGIN ." Hello " CR 1000 DELAY COUNT @ 1 - DUP COUNT ! 0 = UNTIL ; )
+  : TEST-DELAY ( n -- ) COUNT ! BEGIN ." Hello " CR 1000 DELAY COUNT @ 1 - DUP COUNT ! 0 = UNTIL ;
 : CREDIT ." Brought to you by Cleobuline updated with hashtable  https://github.com/cleobuline/forth-bot-gmp-irc-threaded-multi-users/tree/main Site https://labynet.fr " CR ;
 VARIABLE START-TIME
 : SET-START MICRO START-TIME ! ;
 : TIME-SINCE MICRO START-TIME @ - ;
 : SHOW-TIME TIME-SINCE . ;
  
- : PRIME-FACTORS 
+ : PRIME-FACTORS ( n -- p1 p2 ... )
  DUP 1 = IF DROP EXIT THEN
  >R 2
  BEGIN
@@ -148,6 +152,8 @@ VARIABLE YEAR
 VARIABLE MONTH 
 VARIABLE DAY
 : LEAP-YEAR? DUP 4 MOD 0 = IF DUP 100 MOD 0 = IF 400 MOD 0 = EXIT THEN DROP 1 EXIT THEN DROP 0 ;
+ 
+ 
  : MONTH-NAME CASE 1 OF ." January"   ENDOF 
 2 OF ." February"   ENDOF 
 3 OF ." March"    ENDOF 
@@ -209,7 +215,7 @@ VARIABLE DAY
  I NUM-TO-STR
  OFF @ I + 7 MOD 0 = IF CR THEN
  LOOP
- 2DROP 2DROP 2DROP CR ;
+ 2DROP 2DROP  DROP  CR ;
  
  
 : DAYS-IN-MONTH ( month year -- days )
@@ -268,7 +274,8 @@ CALC-YEARS CALC-MONTHS CALC-DAY
  I TODAY-DAY @ = IF 22 EMIT I NUM-TO-STR 15 EMIT ELSE I NUM-TO-STR THEN
  OFF @ I + 7 MOD 0 = IF CR THEN
  LOOP
- 2DROP 2DROP 2DROP DROP  CR ;
+ 2DROP 2DROP 2DROP    CR ;
+ 
 : TODAY-CAL-IRC TODAY CAL-IRC-HIGHLIGHT ;
 
 : CUBE DUP DUP * * ;
@@ -354,22 +361,24 @@ CALC-YEARS CALC-MONTHS CALC-DAY
  
 : MOON ( -- )
   TODAY
+  3DUP
   ." Phase de la lune pour " 
   GET-DOW WEEKDAY-NAME  32 EMIT
-  TODAY
+  DROP
   1 PICK MONTH-NAME  32 EMIT
   DAY @ DUP 10 < IF 32 EMIT THEN NUM-TO-STR  32 EMIT
   YEAR @ NUM-TO-STR CR
-  TODAY  MOON-PHASE 
+     MOON-PHASE 
  SWAP 
  DUP DUP MOON-ICON  MOON-PHASE-NAME 32 EMIT 
   MOON-MESSAGE  32 EMIT 
   ." Illumination "  NUM-TO-STR ." %"  CR 
-  2DROP 2DROP  2DROP   2DROP 
+  DROP         
 ;
 : TREC ( n -- ) DUP 0 <= IF EXIT THEN DUP . 1 - RECURSE ;
 
 : QUOTE DUP  1 = IF  ." When we are dead we do not know that we are dead. It is for others that it is difficult. When we are jerk it is the same - Jean Claude Vandamme - " CR
 ELSE THEN DUP  2 = IF ." Every second laugh is a little time saved on existence -Raphaël Quenard-" CR ELSE THEN 
 3 = IF ." The difference between a genius and an idiot? The genius knows he is an idiot, but the idiot does not care. - Anonymous -" CR ELSE THEN ;
+
 ." File ini.fth with moon loaded "  
