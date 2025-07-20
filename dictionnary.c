@@ -548,6 +548,10 @@ void initDictionary(Env *env) {
     addWord(&env->dictionary, "ROLL", OP_ROLL, 0,env);
     addWord(&env->dictionary, "DEPTH", OP_DEPTH, 0,env);
     addWord(&env->dictionary, "APPEND", OP_APPEND, 0,env);
+    addWord(&env->dictionary, "MOON-PHASE", OP_MOON_PHASE, 0, env);
+    addWord(&env->dictionary, "?DO", OP_QUESTION_DO, 0, env);
+    
+    
     
 }
  
