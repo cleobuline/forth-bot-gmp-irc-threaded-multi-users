@@ -303,6 +303,9 @@ void compileToken(char *token, char **input_rest, Env *env) {
         else if (strcmp(token, "R!UL") == 0) instr.opcode = OP_R_STORE_UL;
         else if (strcmp(token, "I") == 0) instr.opcode = OP_I;
         else if (strcmp(token, "J") == 0) instr.opcode = OP_J;
+        else if (strcmp(token, "MOON-PHASE") == 0) instr.opcode = OP_MOON_PHASE; // Ajoutez cette ligne
+
+
         else if (strcmp(token, "DO") == 0) {
             if (env->control_stack_top >= CONTROL_STACK_SIZE) {
                 set_error(env, "Control stack overflow");
@@ -318,36 +321,63 @@ void compileToken(char *token, char **input_rest, Env *env) {
             env->currentWord.code[env->currentWord.code_length++] = instr;
             return;
         }
-        else if (strcmp(token, "LOOP") == 0) {
-            if (env->control_stack_top <= 0 || env->control_stack[env->control_stack_top - 1].type != CT_DO) {
-                set_error(env, "LOOP without DO");
-                env->compile_error = 1;
-                return;
-            }
-            ControlEntry do_entry = env->control_stack[--env->control_stack_top];
-            instr.opcode = OP_LOOP;
-            instr.operand = do_entry.addr + 1;
-            if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-                resizeCodeArray(env, &env->currentWord);
-            }
-            env->currentWord.code[env->currentWord.code_length++] = instr;
-            return;
-        }
-        else if (strcmp(token, "+LOOP") == 0) {
-            if (env->control_stack_top <= 0 || env->control_stack[env->control_stack_top - 1].type != CT_DO) {
-                set_error(env, "+LOOP without DO");
-                env->compile_error = 1;
-                return;
-            }
-            ControlEntry do_entry = env->control_stack[--env->control_stack_top];
-            instr.opcode = OP_PLUS_LOOP;
-            instr.operand = do_entry.addr + 1;
-            if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-                resizeCodeArray(env, &env->currentWord);
-            }
-            env->currentWord.code[env->currentWord.code_length++] = instr;
-            return;
-        }
+        else if (strcmp(token, "?DO") == 0) {
+    if (env->control_stack_top >= CONTROL_STACK_SIZE) {
+        set_error(env, "Control stack overflow");
+        env->compile_error = 1;
+        return;
+    }
+    instr.opcode = OP_QUESTION_DO;
+    instr.operand = 0;  // Placeholder for skip address (resolved at LOOP/+LOOP)
+    env->control_stack[env->control_stack_top++] = (ControlEntry){CT_QUESTION_DO, env->currentWord.code_length};
+    if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+        resizeCodeArray(env, &env->currentWord);
+    }
+    env->currentWord.code[env->currentWord.code_length++] = instr;
+    return;
+}
+else if (strcmp(token, "LOOP") == 0) {
+    if (env->control_stack_top <= 0 || (env->control_stack[env->control_stack_top - 1].type != CT_DO && env->control_stack[env->control_stack_top - 1].type != CT_QUESTION_DO)) {
+        set_error(env, "LOOP without DO or ?DO");
+        env->compile_error = 1;
+        return;
+    }
+    ControlEntry do_entry = env->control_stack[--env->control_stack_top];
+    instr.opcode = OP_LOOP;
+    instr.operand = do_entry.addr + 1;  // Back to after DO/?DO
+    if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+        resizeCodeArray(env, &env->currentWord);
+    }
+    env->currentWord.code[env->currentWord.code_length++] = instr;
+
+    // If it was ?DO, resolve the skip address to after LOOP
+    if (do_entry.type == CT_QUESTION_DO) {
+        env->currentWord.code[do_entry.addr].operand = env->currentWord.code_length;
+    }
+    return;
+}
+
+else if (strcmp(token, "+LOOP") == 0) {
+    if (env->control_stack_top <= 0 || (env->control_stack[env->control_stack_top - 1].type != CT_DO && env->control_stack[env->control_stack_top - 1].type != CT_QUESTION_DO)) {
+        set_error(env, "+LOOP without DO or ?DO");
+        env->compile_error = 1;
+        return;
+    }
+    ControlEntry do_entry = env->control_stack[--env->control_stack_top];
+    instr.opcode = OP_PLUS_LOOP;
+    instr.operand = do_entry.addr + 1;  // Back to after DO/?DO
+    if (env->currentWord.code_length >= env->currentWord.code_capacity) {
+        resizeCodeArray(env, &env->currentWord);
+    }
+    env->currentWord.code[env->currentWord.code_length++] = instr;
+
+    // If it was ?DO, resolve the skip address to after +LOOP
+    if (do_entry.type == CT_QUESTION_DO) {
+        env->currentWord.code[do_entry.addr].operand = env->currentWord.code_length;
+    }
+    return;
+}
+ 
         else if (strcmp(token, "PICK") == 0) instr.opcode = OP_PICK;
         else if (strcmp(token, "EXIT") == 0) instr.opcode = OP_EXIT;
         else if (strcmp(token, "CLOCK") == 0) instr.opcode = OP_CLOCK;
