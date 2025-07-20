@@ -472,32 +472,7 @@ else if (strcmp(token, "+LOOP") == 0) {
             }
             return;
         }
-        else if (strcmp(token, "S") == 0) {
-            char *start = *input_rest;
-            char *end = strstr(start, " S ");
-            if (!end) {
-                set_error(env, "S expects a string ending with S");
-                env->compile_error = 1;
-                return;
-            }
-            long int len = end - start;
-            char *str = SAFE_MALLOC(len + 1);
-            strncpy(str, start, len);
-            str[len] = '\0';
-            instr.opcode = OP_QUOTE;
-            instr.operand = env->currentWord.string_count;
-            if (env->currentWord.string_count >= env->currentWord.string_capacity) {
-                resizeStringArray(env, &env->currentWord);
-            }
-            env->currentWord.strings[env->currentWord.string_count++] = str;
-            if (env->currentWord.code_length >= env->currentWord.code_capacity) {
-                resizeCodeArray(env, &env->currentWord);
-            }
-            env->currentWord.code[env->currentWord.code_length++] = instr;
-            *input_rest = end + 3;
-            while (**input_rest == ' ' || **input_rest == '\t') (*input_rest)++;
-            return;
-        }
+ 
         else if (strcmp(token, "IF") == 0) {
             if (env->control_stack_top >= CONTROL_STACK_SIZE) {
                 set_error(env, "Control stack overflow");
