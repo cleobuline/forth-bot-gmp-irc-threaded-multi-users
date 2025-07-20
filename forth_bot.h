@@ -4,11 +4,15 @@
 #include <pthread.h>
 #include <signal.h>
 #include "uthash.h"
-#define STACK_SIZE 1000
+#include <math.h> 
+#include <time.h>
+  #include <libnova/lunar.h>
+// #include <libnova/julian_day.h>
+#define STACK_SIZE 10000
 #define WORD_CODE_SIZE 1024
 #define CONTROL_STACK_SIZE 500
 #define MAX_STRING_SIZE 256
-#define MPZ_POOL_SIZE 3
+#define MPZ_POOL_SIZE 10
 #define BUFFER_SIZE 8000
 #define SERVER "46.16.175.175"
 #define PORT 6667
@@ -104,10 +108,14 @@ typedef enum {
     OP_MICRO,
     OP_MILLI,
     OP_ROLL,
-    OP_APPEND
+    OP_APPEND,
+    OP_MOON_PHASE,
+    // In enum OpCode, add after OP_MOON_PHASE or at the end:
+OP_QUESTION_DO,
+ 
 } OpCode;
 
-#define IRC_MSG_QUEUE_SIZE 2000
+#define IRC_MSG_QUEUE_SIZE 8000
 typedef struct {
     char msg[8000];
     int used;
@@ -140,7 +148,7 @@ typedef struct {
     long int top;
 } Stack;
 
-typedef enum { CT_IF, CT_ELSE, CT_DO, CT_CASE, CT_OF, CT_ENDOF, CT_BEGIN, CT_WHILE, CT_REPEAT } ControlType;
+typedef enum { CT_IF, CT_ELSE, CT_DO, CT_CASE, CT_OF, CT_ENDOF, CT_BEGIN, CT_WHILE, CT_REPEAT ,CT_QUESTION_DO} ControlType;
 
 typedef struct {
     ControlType type;
@@ -191,6 +199,7 @@ typedef struct Env {
     char output_buffer[BUFFER_SIZE];
     int buffer_pos;
     CompiledWord currentWord;
+    volatile sig_atomic_t cancel_flag; // New flag for cancellation
     int compiling;
     int compile_error;
     long int current_word_index;
@@ -211,6 +220,7 @@ typedef struct Env {
     pthread_cond_t queue_cond;
     int thread_running;
     int being_freed;
+ 
     mpz_t mpz_pool[MPZ_POOL_SIZE];
     WordHash *word_hash;      // Nouvelle table de hachage pour les mots
 } Env;
