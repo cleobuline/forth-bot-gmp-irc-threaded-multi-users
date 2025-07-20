@@ -6,13 +6,87 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <gmp.h>
-#include <time.h>
+
 #include <ctype.h>
 #include "memory_forth.h"
 #include <netdb.h>
 #include <curl/curl.h>
 #include "forth_bot.h"
+ 
+#include <novas.h>
+#include <eph_manager.h>
+ 
+double normalize_angle(double angle) {
+    while (angle < 0.0) angle += 360.0;
+    while (angle >= 360.0) angle -= 360.0;
+    return angle;
+}
 
+// Ensure this is included for floor, fmod, cos
+
+// Calcule le jour julien à partir d'une date
+ 
+// Initialisation pour Paris
+/* 
+struct ln_lnlat_posn observer = {
+    .lat = 48.8566, // Latitude Nord
+    .lng = 2.3522   // Longitude Est
+};
+ */ 
+ 
+void get_system_time_utc(int *year, int *month, int *day, int *hour, int *minute, int *second) {
+    time_t now;
+    struct tm *utc_time;
+    time(&now);
+    utc_time = gmtime(&now);
+    *year = utc_time->tm_year + 1900;
+    *month = utc_time->tm_mon + 1;
+    *day = utc_time->tm_mday;
+    *hour = utc_time->tm_hour;
+    *minute = utc_time->tm_min;
+    *second = utc_time->tm_sec;
+}
+static double custom_julian_date(int year, int month, int day, int hour, int minute, int second) {
+    if (month <= 2) {
+        year -= 1;
+        month += 12;
+    }
+    int A = year / 100;
+    int B = 2 - A + (A / 4);
+    double jd = floor(365.25 * (year + 4716)) + floor(30.6001 * (month + 1)) + day + B - 1524.5;
+    jd += (hour + minute / 60.0 + second / 3600.0) / 24.0;
+    return jd;
+}
+ 
+
+// Calcule la phase lunaire (0-7) et le pourcentage d'illumination
+ 
+double approximate_phase_angle(double jd) {
+    double jd_new_moon = 2461974.057; // Nouvelle lune du 27 mai 2025
+    double period = 29.530588853;
+    double days_since_new_moon = fmod(jd - jd_new_moon, period);
+    if (days_since_new_moon < 0) days_since_new_moon += period;
+    double phase = 360.0 * days_since_new_moon / period;
+    return fmod(phase, 360.0);
+}
+
+void moon_phase(double jd, int *phase, double *illumination) {
+    *illumination = ln_get_lunar_disk(jd) * 100.0;
+    double phase_angle = approximate_phase_angle(jd);
+
+    if (phase_angle <= 5.0 || phase_angle >= 355.0) *phase = 0;
+    else if (phase_angle < 85.0) *phase = 1;
+    else if (phase_angle < 95.0) *phase = 2;
+    else if (phase_angle < 170.0) *phase = 3;
+    else if (phase_angle < 190.0) *phase = 4;
+    else if (phase_angle < 265.0) *phase = 5;
+    else if (phase_angle < 275.0) *phase = 6;
+    else *phase = 7;
+
+}
+
+ 
+ 
 void executeInstruction(Instruction instr, Stack *stack, long int *ip, CompiledWord *word, int word_index, Env *env) {
     if (!env || env->error_flag) return;
     mpz_t *a = &env->mpz_pool[0], *b = &env->mpz_pool[1], *result = &env->mpz_pool[2];
@@ -337,7 +411,7 @@ case OP_CR:
         env->output_buffer[env->buffer_pos++] = '\n';
         env->output_buffer[env->buffer_pos] = '\0';
     }
-    if (env->buffer_pos > 0) {
+    if (env->buffer_pos >= 0) {
         send_to_channel(env->output_buffer);  // Envoyer au canal IRC
         env->buffer_pos = 0;  // Réinitialiser le buffer
         memset(env->output_buffer, 0, BUFFER_SIZE);
@@ -1337,7 +1411,99 @@ case OP_ROLL:
     fprintf(file, "%s\n", text);
     fclose(file);
     break;
-        default:
+ 
+ 
+
+case OP_MOON_PHASE:
+    if (stack->top < 2) {
+        printf("DEBUG: Stack underflow, top=%ld\n", stack->top);
+        set_error(env, "MOON-PHASE: Stack underflow");
+        break;
+    }
+
+    // Récupérer l'heure système en UTC
+    int year , month , day , hour, minute, second;
+    get_system_time_utc(&year, &month, &day, &hour, &minute, &second);
+ 
+
+    pop(env, env->mpz_pool[0]); // Année
+    pop(env, env->mpz_pool[1]); // Mois
+    pop(env, env->mpz_pool[2]); // Jour
+    if (!mpz_fits_sint_p(env->mpz_pool[0]) || !mpz_fits_sint_p(env->mpz_pool[1]) ||
+        !mpz_fits_sint_p(env->mpz_pool[2])) {
+        printf("DEBUG: Invalid integer conversion\n");
+        set_error(env, "MOON-PHASE: Invalid date values");
+        push(env, env->mpz_pool[2]); // Jour
+        push(env, env->mpz_pool[1]); // Mois
+        push(env, env->mpz_pool[0]); // Année
+        break;
+    }
+      year = mpz_get_si(env->mpz_pool[0]);
+      month = mpz_get_si(env->mpz_pool[1]);
+      day = mpz_get_si(env->mpz_pool[2]);
+
+ 
+ 
+
+    // Validation des dates
+    int days_in_month[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    if (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)) days_in_month[1] = 29;
+    if (month < 1 || month > 12 || day < 1 || day > days_in_month[month - 1] ||
+        hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) {
+ 
+        set_error(env, "MOON-PHASE: Invalid date");
+        push(env, env->mpz_pool[2]);
+        push(env, env->mpz_pool[1]);
+        push(env, env->mpz_pool[0]);
+        break;
+    }
+
+    // Calculer le JD avec fonction manuelle
+ 
+    double jd = custom_julian_date(year, month, day, hour, minute, second);
+
+ 
+    int phase;
+    double illumination;
+    moon_phase(jd, &phase, &illumination);
+    
+    mpz_set_si(env->mpz_pool[3], phase);
+    push(env, env->mpz_pool[3]);
+    mpz_set_si(env->mpz_pool[3], (int)illumination);
+    push(env, env->mpz_pool[3]);
+    break;
+ 
+ 
+ 
+
+
+    case OP_QUESTION_DO:
+    if (stack->top < 1) {
+        set_error(env,"?DO: Stack underflow");
+        break;
+    }
+    pop(env, *b); // index initial
+    pop(env, *a); // limite
+    if (mpz_cmp(*a, *b) == 0) { // If limit == index, skip the loop
+        *ip = instr.operand - 1; // Jump to end (after LOOP)
+    } else {
+        if (env->return_stack.top + 3 >= STACK_SIZE) {
+            set_error(env, "?DO: Return stack overflow");
+            push(env, *a);
+            push(env, *b);
+            break;
+        }
+        env->loop_nesting_level++; // // Only if entering the loop
+        env->return_stack.top++;
+        mpz_set(env->return_stack.data[env->return_stack.top], *a); // limite
+        env->return_stack.top++;
+        mpz_set(env->return_stack.data[env->return_stack.top], *b); // index
+        env->return_stack.top++;
+        mpz_set_si(env->return_stack.data[env->return_stack.top], *ip + 1); // adresse de retour (loop body)
+    }
+    break;
+    
+      default:
             set_error(env,"Unknown opcode");
             break;
     }
