@@ -7,6 +7,7 @@
 #include <math.h> 
 #include <time.h>
   #include <libnova/lunar.h>
+  #include <gmp.h>
 // #include <libnova/julian_day.h>
 #define STACK_SIZE 10000
 #define WORD_CODE_SIZE 1024
@@ -116,6 +117,29 @@ OP_QUESTION_DO,
 } OpCode;
 
 #define IRC_MSG_QUEUE_SIZE 8000
+
+// Structure pour un nœud de mémoire
+typedef struct MemoryNode {
+    char *name;              // Nom du nœud
+    unsigned long type;      // Type (TYPE_VAR, TYPE_STRING, TYPE_ARRAY)
+    unsigned long index;   // ← index unique, fixé à la création, jamais recalculé
+    union {
+        mpz_t number;        // Pour TYPE_VAR
+        char *string;        // Pour TYPE_STRING
+        struct {
+            mpz_t *data;     // Données pour TYPE_ARRAY
+            unsigned long size; // Taille du tableau
+        } array;
+    } value;
+    struct MemoryNode *next; // Pointeur vers le nœud suivant
+} MemoryNode;
+
+// Structure pour la liste de mémoire
+typedef struct {
+    MemoryNode *head;        // Tête de la liste
+    unsigned long count;     // Nombre total de nœuds
+     unsigned long total_created; // compteur monotone pour les index → jamais décrémenté
+} MemoryList;
 typedef struct {
     char msg[8000];
     int used;
@@ -234,23 +258,29 @@ struct irc_message {
 
 extern volatile sig_atomic_t shutdown_flag;
 
-#define SAFE_MALLOC(size) ({ \
-    void *ptr = malloc(size); \
-    if (!ptr) { \
-        fprintf(stderr, "Fatal: Memory allocation failed\n"); \
-        pthread_kill(main_thread, SIGUSR1); \
-    } \
-    ptr; \
-})
+#define SAFE_MALLOC(size)                                              \
+    ({                                                                 \
+        void *ptr = malloc(size);                                      \
+        if (!ptr) {                                                    \
+            fprintf(stderr, "Fatal: Memory allocation failed\n");      \
+            fflush(stderr);                                            \
+            pthread_kill(main_thread, SIGUSR1);                        \
+            abort();   /* Ne jamais revenir d'un échec d'alloc */      \
+        }                                                              \
+        ptr;                                                           \
+    })
 
-#define SAFE_REALLOC(ptr, size) ({ \
-    void *new_ptr = realloc(ptr, size); \
-    if (!new_ptr) { \
-        fprintf(stderr, "Fatal: Memory reallocation failed\n"); \
-        pthread_kill(main_thread, SIGUSR1); \
-    } \
-    new_ptr; \
-})
+#define SAFE_REALLOC(ptr, size)                                        \
+    ({                                                                 \
+        void *new_ptr = realloc(ptr, size);                            \
+        if (!new_ptr) {                                                \
+            fprintf(stderr, "Fatal: Memory reallocation failed\n");    \
+            fflush(stderr);                                            \
+            pthread_kill(main_thread, SIGUSR1);                        \
+            abort();   /* Ne jamais revenir d'un échec de realloc */   \
+        }                                                              \
+        new_ptr;                                                       \
+    })
 
 void parse_irc_message(const char *line, struct irc_message *msg);
 void free_irc_message(struct irc_message *msg);
@@ -261,6 +291,7 @@ void executeCompiledWord(CompiledWord *word, Stack *stack, int word_index, Env *
 void compileToken(char *token, char **input_rest, Env *env);
 void interpret(char *input, Stack *stack, Env *env);
 void freeCurrentWord(Env *env);
+void freeWordHash(Env *env);   
 void print_word_definition_irc(int index, Stack *stack, Env *env);
 int findCompiledWordIndex(char *name, Env *env);
 void resizeDynamicDictionary(DynamicDictionary *dict);
