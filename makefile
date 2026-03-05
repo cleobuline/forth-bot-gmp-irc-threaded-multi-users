@@ -1,7 +1,7 @@
 CC = gcc
-CFLAGS = -O3 -Wall -Wextra -flto -g -march=native
-LDFLAGS = -lgmp -lcurl -pthread
-SOURCES = main.c memory_forth.c executeinstruction.c compiletoken.c images.c dictionnary.c env.c utils.c irc.c interpret.c
+CFLAGS = -O3 -Wall -Wextra -flto=auto -g -march=native
+LDFLAGS = -flto=auto -lgmp -lcurl -pthread -lnova  -lm  # Ajout de -lm
+SOURCES = main.c memory_forth.c executeinstruction.c    compiletoken.c images.c   dictionnary.c env.c utils.c irc.c interpret.c
 OBJECTS = $(SOURCES:.c=.o)
 HEADERS = forth_bot.h memory_forth.h
 TARGET = forth
