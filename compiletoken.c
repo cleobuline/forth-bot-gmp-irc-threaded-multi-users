@@ -49,9 +49,10 @@ static void resizeDynamicBuffer(Env *env, char **buffer, size_t *capacity, size_
     *capacity = new_capacity;
 }
 
+ 
 void executeCompiledWord(CompiledWord *word, Stack *stack, int word_index, Env *env) {
     long int ip = 0;
-    while (ip < word->code_length && !env->error_flag) {
+    while (ip < word->code_length && !env->error_flag && !env->cancel_flag) { // ← manque cancel_flag
         executeInstruction(word->code[ip], stack, &ip, word, word_index, env);
         ip++;
     }
@@ -939,79 +940,79 @@ else if (strcmp(token, "+LOOP") == 0) {
             if (next_token) compileToken(next_token, input_rest, env);
             return;
         }
-        else if (strcmp(token, "CONSTANT") == 0) {
-            char *next_token = strtok_r(NULL, " \t\n", input_rest);
-            if (!next_token) {
-                set_error(env, "CONSTANT requires a name");
-                env->compile_error = 1;
-                return;
-            }
-            if (env->main_stack.top < 0) {
-                set_error(env, "CONSTANT: Stack underflow");
-                env->compile_error = 1;
-                return;
-            }
-            mpz_t value;
-            mpz_init(value);
-            pop(env, value);
-            int existing_idx = findCompiledWordIndex(next_token, env);
-            CompiledWord *word;
-            int dict_idx;
+else if (strcmp(token, "CONSTANT") == 0) {
+    char *name = strtok_r(NULL, " \t\n", input_rest);
+    if (!name) {
+        set_error(env, "CONSTANT needs a name");
+        env->compile_error = 1;
+        return;
+    }
 
-            if (existing_idx >= 0) {
-                word = &env->dictionary.words[existing_idx];
-                if (word->name) free(word->name);
-                if (word->code) free(word->code);
-                for (int j = 0; j < word->string_count; j++) {
-                    if (word->strings[j]) free(word->strings[j]);
-                }
-                if (word->strings) free(word->strings);
-            } else {
-                if (env->dictionary.count >= env->dictionary.capacity) resizeDynamicDictionary(&env->dictionary);
-                dict_idx = env->dictionary.count++;
-                word = &env->dictionary.words[dict_idx];
-            }
+    if (env->main_stack.top < 0) {
+        set_error(env, "CONSTANT: stack underflow");
+        env->compile_error = 1;
+        return;
+    }
 
-            word->name = strdup(next_token);
-            if (!word->name) {
-                mpz_clear(value);
-                set_error(env, "CONSTANT: Memory allocation failed for name");
-                env->compile_error = 1;
-                return;
-            }
-            word->code = (Instruction *)SAFE_MALLOC(sizeof(Instruction));
-            if (!word->code) {
-                free(word->name);
-                mpz_clear(value);
-                set_error(env, "CONSTANT: Memory allocation failed for code");
-                env->compile_error = 1;
-                return;
-            }
-            word->strings = (char **)SAFE_MALLOC(sizeof(char *));
-            if (!word->strings) {
-                free(word->name);
-                free(word->code);
-                mpz_clear(value);
-                set_error(env, "CONSTANT: Memory allocation failed for strings");
-                env->compile_error = 1;
-                return;
-            }
+    mpz_t value;
+    mpz_init(value);
+    pop(env, value);
 
-            word->code_capacity = 1;
-            word->code[0].opcode = OP_CONSTANT;
-            word->code[0].operand = mpz_get_ui(value);
-            word->code_length = 1;
-            word->string_capacity = 1;
-            word->string_count = 0;
-            word->immediate = 0;
+    // Création avec TYPE_CONSTANT
+    unsigned long mem_idx = memory_create(&env->memory_list, name, TYPE_CONSTANT);
+    if (mem_idx == 0) {
+        mpz_clear(value);
+        set_error(env, "CONSTANT: memory creation failed");
+        env->compile_error = 1;
+        return;
+    }
 
-            removeWordFromHash(env, next_token);
-            addWordToHash(env, next_token, existing_idx >= 0 ? existing_idx : dict_idx);
+    memory_store(&env->memory_list, mem_idx, &value,env);
 
-            mpz_clear(value);
-            *input_rest = NULL;
-            return;
-        }
+    // Nettoyage ancien mot si redéfinition
+    int old_idx = findCompiledWordIndex(name, env);
+    CompiledWord *word;
+    int dict_idx;
+
+    if (old_idx >= 0) {
+        word = &env->dictionary.words[old_idx];
+        // Libération propre de l’ancien contenu
+        if (word->name) free(word->name);
+        if (word->code) free(word->code);
+        for (int j = 0; j < word->string_count; j++)
+            if (word->strings[j]) free(word->strings[j]);
+        if (word->strings) free(word->strings);
+    } else {
+        if (env->dictionary.count >= env->dictionary.capacity)
+            resizeDynamicDictionary(&env->dictionary);
+        dict_idx = env->dictionary.count++;
+        word = &env->dictionary.words[dict_idx];
+    }
+
+    word->name = strdup(name);
+    word->code = SAFE_MALLOC(sizeof(Instruction));
+    word->code_capacity = 1;
+    word->code[0].opcode = OP_PUSH;
+    word->code[0].operand = mem_idx;
+    word->code_length = 1;
+
+    word->strings = SAFE_MALLOC(sizeof(char *));
+    word->string_capacity = 1;
+    word->string_count = 0;
+    word->immediate = 0;
+
+    removeWordFromHash(env, name);
+    addWordToHash(env, name, old_idx >= 0 ? old_idx : dict_idx);
+
+    mpz_clear(value);
+
+    // Petit log pour confirmer (à retirer plus tard)
+    //char dbg[200];
+    //snprintf(dbg, sizeof(dbg), "CONSTANT %s created → mem_idx = %lx, length = %ld", name, mem_idx, word->code_length);
+    //send_to_channel(dbg);
+
+    return;
+}
         else if (strcmp(token, "APPEND") == 0) {
             instr.opcode = OP_APPEND;
             executeInstruction(instr, &env->main_stack, NULL, NULL, -1, env);
