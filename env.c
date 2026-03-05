@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include "memory_forth.h"
 #include "forth_bot.h"
+
 void initWordHash(Env *env);
 void enqueue(const char *cmd, const char *nick) {
     Env *env = findEnv(nick);
@@ -35,7 +36,7 @@ void enqueue(const char *cmd, const char *nick) {
 }
 
 Command *dequeue(Env *env) {
-    if (!env || env->being_freed) return NULL;
+    if (!env || env->being_freed || env->cancel_flag) return NULL;
 
     pthread_mutex_lock(&env->queue_mutex);
     if (env->queue_head == env->queue_tail) {
@@ -66,13 +67,15 @@ void clear_string_stack(Env *env) {
 
 static void initEnv(Env *env, const char *nick) {
     if (!env || !nick) return;
-
+env->loop_stack_top = 0; //  
     env->being_freed = 0;
+    env->cancel_flag = 0; // Initialize cancel_flag
     strncpy(env->nick, nick, MAX_STRING_SIZE - 1);
     env->nick[MAX_STRING_SIZE - 1] = '\0';
-	env->loop_nesting_level=0 ; // Niveau d'imbrication des boucles
+    env->loop_nesting_level = 0; // Niveau d'imbrication des boucles
     env->main_stack.top = -1;
     env->return_stack.top = -1;
+
     for (int i = 0; i < STACK_SIZE; i++) {
         mpz_init(env->main_stack.data[i]);
         mpz_init(env->return_stack.data[i]);
@@ -89,7 +92,7 @@ static void initEnv(Env *env, const char *nick) {
     if (username_idx != 0) {
         MemoryNode *username_node = memory_get(&env->memory_list, username_idx);
         if (username_node) {
-            memory_store(&env->memory_list, username_idx, nick);
+            memory_store(&env->memory_list, username_idx, nick,env);
             if (env->dictionary.count >= env->dictionary.capacity) {
                 resizeDynamicDictionary(&env->dictionary);
             }
@@ -144,6 +147,7 @@ Env *createEnv(const char *nick) {
     initEnv(new_env, nick);
     initDictionary(new_env);
     new_env->being_freed = 0;
+    new_env->cancel_flag = 0; // Initialize cancel_flag
 
     new_env->thread_running = 1;
     if (pthread_create(&new_env->thread, NULL, env_interpret_thread, new_env) != 0) {
@@ -176,6 +180,7 @@ void freeEnv(const char *nick) {
         return;
     }
     curr->being_freed = 1;
+    curr->cancel_flag = 1; // Signal cancellation
     if (prev) prev->next = curr->next;
     else head = curr->next;
     pthread_rwlock_unlock(&env_rwlock);
@@ -218,13 +223,21 @@ void freeEnv(const char *nick) {
     }
     if (curr->dictionary.words) free(curr->dictionary.words);
 
-    MemoryNode *node = curr->memory_list.head;
-    while (node) {
-        MemoryNode *next = node->next;
-        memory_free(&curr->memory_list, node->name);
-        node = next;
+MemoryNode *node = curr->memory_list.head;
+while (node) {
+    MemoryNode *next = node->next;
+    // libérer directement sans passer par memory_free()
+    if (node->type == TYPE_VAR) mpz_clear(node->value.number);
+    else if (node->type == TYPE_STRING && node->value.string) free(node->value.string);
+    else if (node->type == TYPE_ARRAY && node->value.array.data) {
+        for (unsigned long i = 0; i < node->value.array.size; i++)
+            mpz_clear(node->value.array.data[i]);
+        free(node->value.array.data);
     }
-
+    free(node->name);
+    free(node);
+    node = next;
+}
     if (curr->currentWord.name) free(curr->currentWord.name);
     for (int i = 0; i < curr->currentWord.string_count; i++) {
         if (curr->currentWord.strings[i]) free(curr->currentWord.strings[i]);
@@ -246,6 +259,7 @@ void freeEnv(const char *nick) {
     }
 
     fprintf(stderr, "Freed Env for %s\n", nick);
+    freeWordHash(curr);
     free(curr);
 }
 
