@@ -12,8 +12,11 @@
 #include <ctype.h>
 #include <netdb.h>
 #include <curl/curl.h>
-#include "memory_forth.h"
 #include "forth_bot.h"
+ 
+
+ 
+
 
 Env *head = NULL;
 int irc_socket = -1;
@@ -24,7 +27,8 @@ volatile sig_atomic_t shutdown_flag = 0;
 pthread_mutex_t irc_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_rwlock_t env_rwlock = PTHREAD_RWLOCK_INITIALIZER;
 
-void handle_sigusr1(int ) {
+
+void handle_sigusr1( ) {
     shutdown_flag = 1;
 }
 
