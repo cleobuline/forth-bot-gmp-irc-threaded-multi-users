@@ -13,7 +13,7 @@
 #include <curl/curl.h>
 #include "forth_bot.h"
  
-#include <novas.h>
+// #include <novas.h>
 #include <eph_manager.h>
  
 double normalize_angle(double angle) {
@@ -98,18 +98,32 @@ unsigned long encoded_idx;
     switch (instr.opcode) {
  
 case OP_PUSH:
-    if (instr.operand < word->string_count && word->strings[instr.operand]) {
-        if (mpz_set_str(*result, word->strings[instr.operand], 10) == 0) {
-            push(env, *result);
+{
+    if (instr.operand & TYPE_MASK) {
+        // Index mémoire encodé : VARIABLE, STRING, ARRAY, CONSTANT
+        MemoryNode *node = memory_get(&env->memory_list, instr.operand);
+        if (!node) { set_error(env, "PUSH: invalid memory index"); break; }
+        if (node->type == TYPE_CONSTANT) {
+            push(env, node->value.number);
         } else {
-            set_error(env,"OP_PUSH: Invalid string number");
+            mpz_set_ui(*result, (unsigned long)instr.operand);
+            push(env, *result);
         }
     } else {
-        mpz_set_ui(*result, instr.operand);
-        push(env, *result);
+        // Littéral numérique : operand = index dans strings[]
+        // La valeur réelle est dans word->strings[operand]
+        if (instr.operand >= 0 && instr.operand < word->string_count
+            && word->strings[instr.operand]) {
+            mpz_set_str(*result, word->strings[instr.operand], 10);
+            push(env, *result);
+        } else {
+            // Fallback : operand est la valeur directe (mots built-in)
+            mpz_set_si(*result, instr.operand);
+            push(env, *result);
+        }
     }
-
-    break;
+}
+break;
         case OP_ADD:
             pop(env, *b);
             pop(env, *a);
@@ -425,126 +439,156 @@ case OP_VARIABLE:
             set_error(env, "VARIABLE: Memory creation failed");
             break;
         }
-        if (env->dictionary.count >= env->dictionary.capacity) resizeDynamicDictionary(&env->dictionary);
+
+        if (env->dictionary.count >= env->dictionary.capacity) {
+            resizeDynamicDictionary(&env->dictionary);
+        }
+
         int dict_idx = env->dictionary.count++;
         env->dictionary.words[dict_idx].name = strdup(name);
         env->dictionary.words[dict_idx].code = SAFE_MALLOC(sizeof(Instruction));
         if (!env->dictionary.words[dict_idx].name || !env->dictionary.words[dict_idx].code) {
             set_error(env, "VARIABLE: Memory allocation failed");
-            free(env->dictionary.words[dict_idx].name);
-            free(env->dictionary.words[dict_idx].code);
+            if (env->dictionary.words[dict_idx].name) free(env->dictionary.words[dict_idx].name);
+            if (env->dictionary.words[dict_idx].code) free(env->dictionary.words[dict_idx].code);
+            // on laisse le slot dans un état neutre
+            env->dictionary.words[dict_idx].name = NULL;
+            env->dictionary.words[dict_idx].code = NULL;
+            env->dictionary.count--; // on rend le slot
             break;
         }
-        env->dictionary.words[dict_idx].code[0].opcode = OP_PUSH;
+
+        env->dictionary.words[dict_idx].code[0].opcode  = OP_PUSH;
         env->dictionary.words[dict_idx].code[0].operand = index;
-        env->dictionary.words[dict_idx].code_length = 1;
-        env->dictionary.words[dict_idx].strings = SAFE_MALLOC(sizeof(char *));
+        env->dictionary.words[dict_idx].code_length     = 1;
+
+        env->dictionary.words[dict_idx].strings         = SAFE_MALLOC(sizeof(char *));
         env->dictionary.words[dict_idx].string_capacity = 1;
-        env->dictionary.words[dict_idx].string_count = 0;
-        env->dictionary.words[dict_idx].immediate = 0;
+        env->dictionary.words[dict_idx].string_count    = 0;
+        env->dictionary.words[dict_idx].immediate       = 0;
+
+        // 🔹 cohérence avec le reste : on met aussi la variable dans la table de hachage
+        addWordToHash(env, name, dict_idx);
     } else {
         set_error(env, "VARIABLE: Invalid name");
     }
     break;
-case OP_STORE:
-    if (stack->top < 0) {
-        set_error(env,"STORE: Stack underflow for address");
-        break;
-    }
-    char debug_msg[512];
-    /*  snprintf(debug_msg, sizeof(debug_msg), "STORE: Starting, stack_top=%d", stack->top);
-    send_to_channel(debug_msg);
- */
-    pop(env, *result); // encoded_idx
-    encoded_idx = mpz_get_ui(*result);
-   /*   snprintf(debug_msg, sizeof(debug_msg), "STORE: Popped encoded_idx=%lu, stack_top=%d", encoded_idx, stack->top);
-    send_to_channel(debug_msg);
- */
-    node = memory_get(&env->memory_list, encoded_idx);
-    if (!node) {
-        snprintf(debug_msg, sizeof(debug_msg), "STORE: Invalid memory index for encoded_idx=%lu", encoded_idx);
-        set_error(env,debug_msg);
-        push(env, *result);
-        break;
-    }
-    type = node->type;
-     /* snprintf(debug_msg, sizeof(debug_msg), "STORE: Found node %s with type=%lu, stack_top=%d", node->name, type, stack->top);
-    send_to_channel(debug_msg);
- */
-    if (type == TYPE_VAR) {
-        if (stack->top < 0) {
-            set_error(env,"STORE: Stack underflow for variable value");
-            push(env, *result);
-            break;
-        }
-        pop(env, *a);
-        memory_store(&env->memory_list, encoded_idx, a);
-        /*  snprintf(debug_msg, sizeof(debug_msg), "STORE: Set %s = %s", node->name, mpz_get_str(NULL, 10, *a));
-        send_to_channel(debug_msg);
-        */
-         
-    } else if (type == TYPE_ARRAY) {
-        if (stack->top < 1) {
-            set_error(env,"STORE: Stack underflow for array operation");
-            push(env, *result);
-            break;
-        }
-        pop(env, *a); // offset
-        pop(env, *b); // valeur
-        unsigned long  offset = mpz_get_si(*a);
-         /*  snprintf(debug_msg, sizeof(debug_msg), "STORE: Array operation on %s, offset=%d, value=%s", node->name, offset, mpz_get_str(NULL, 10, *b));
-        send_to_channel(debug_msg);
-        */
-        if (  offset < node->value.array.size) {
-            mpz_set(node->value.array.data[offset], *b);
-            /* snprintf(debug_msg, sizeof(debug_msg), "STORE: Set %s[%d] = %s", node->name, offset, mpz_get_str(NULL, 10, *b));
-            send_to_channel(debug_msg);
-            */ 
-        } else {
-			snprintf(debug_msg, sizeof(debug_msg), "STORE: Array index %lu out of bounds (size=%lu)", offset, node->value.array.size);     
 
-            set_error(env,debug_msg);
-            push(env, *b);
-            push(env, *a);
-            push(env, *result);
-        }
-    } else if (type == TYPE_STRING) {
+
+case OP_STORE:
+{
+    if (stack->top < 1) {
+        set_error(env, "STORE: stack underflow");
+        break;
+    }
+
+    mpz_t addr_mpz, value;
+    mpz_inits(addr_mpz, value, NULL);
+
+    pop(env, addr_mpz);   // adresse encodée (top)
+    pop(env, value);      // valeur en dessous
+
+    if (!mpz_fits_ulong_p(addr_mpz)) {
+        set_error(env, "STORE: address too large");
+        mpz_clears(addr_mpz, value, NULL);
+        break;
+    }
+
+    unsigned long encoded_idx = mpz_get_ui(addr_mpz);
+    MemoryNode *node = memory_get(&env->memory_list, encoded_idx);
+    if (!node) {
+        char msg[180];
+        snprintf(msg, sizeof(msg), "STORE: invalid memory index %lx", encoded_idx);
+        set_error(env, msg);
+        push(env, value);
+        mpz_clears(addr_mpz, value, NULL);
+        break;
+    }
+
+    if (node->type == TYPE_VAR) {
+        // value addr !
+        // value est un mpz directement
+        memory_store(&env->memory_list, encoded_idx, &value, env);
+
+    } else if (node->type == TYPE_ARRAY) {
+        // offset value addr !  →  on a déjà value et addr,
+        // il faut encore dépiler offset
         if (stack->top < 0) {
-            set_error(env,"STORE: Stack underflow for string value");
-            push(env, *result);
+            set_error(env, "STORE array: missing offset");
+            push(env, value);
+            mpz_clears(addr_mpz, value, NULL);
             break;
         }
-        pop(env, *a); // index dans string_stack
-        int str_idx = mpz_get_si(*a);
-        if (mpz_fits_slong_p(*a) && str_idx >= 0 && str_idx <= env->string_stack_top) {
-            char *str = env->string_stack[str_idx];
-            if (str) {
-                memory_store(&env->memory_list, encoded_idx, str);
-                for (int i = str_idx; i < env->string_stack_top; i++) {
-                    env->string_stack[i] = env->string_stack[i + 1];
-                }
-                env->string_stack[env->string_stack_top--] = NULL;
-                free (str);
-                /* snprintf(debug_msg, sizeof(debug_msg), "STORE: Set %s = %s", node->name, str);
-                send_to_channel(debug_msg);
-                */ 
-            } else {
-                set_error(env,"STORE: No string at stack index");
-                push(env, *a);
-                push(env, *result);
-            }
-        } else {
-            set_error(env,"STORE: Invalid string stack index");
-            push(env, *a);
-            push(env, *result);
+        mpz_t offset_mpz;
+        mpz_init(offset_mpz);
+        pop(env, offset_mpz);
+
+        if (!mpz_fits_ulong_p(offset_mpz)) {
+            set_error(env, "STORE array: offset too large");
+            push(env, offset_mpz);
+            push(env, value);
+            mpz_clear(offset_mpz);
+            mpz_clears(addr_mpz, value, NULL);
+            break;
         }
+        unsigned long offset = mpz_get_ui(offset_mpz);
+        mpz_clear(offset_mpz);
+
+        if (offset >= node->value.array.size) {
+            char msg[180];
+            snprintf(msg, sizeof(msg), "STORE array: index %lu out of bounds (size=%lu)",
+                     offset, node->value.array.size);
+            set_error(env, msg);
+            push(env, value);
+        } else {
+            mpz_set(node->value.array.data[offset], value);
+        }
+
+    } else if (node->type == TYPE_STRING) {
+        // Convention cohérente avec OP_FETCH et OP_QUOTE :
+        // "value" sur la pile principale est l'index dans string_stack
+        // (exactement comme ce que pousse OP_QUOTE / OP_FETCH pour TYPE_STRING)
+        if (!mpz_fits_slong_p(value)) {
+            set_error(env, "STORE string: invalid string stack index");
+            mpz_clears(addr_mpz, value, NULL);
+            break;
+        }
+        long str_idx = mpz_get_si(value);
+        if (str_idx < 0 || str_idx > env->string_stack_top) {
+            set_error(env, "STORE string: string stack index out of range");
+            push(env, value);
+            mpz_clears(addr_mpz, value, NULL);
+            break;
+        }
+        char *str = env->string_stack[str_idx];
+        if (!str) {
+            set_error(env, "STORE string: null string at index");
+            push(env, value);
+            mpz_clears(addr_mpz, value, NULL);
+            break;
+        }
+        // Stocker dans la mémoire
+        memory_store(&env->memory_list, encoded_idx, str, env);
+
+        // Retirer la string du string_stack (décalage)
+        free(str);
+        for (int i = str_idx; i < env->string_stack_top; i++)
+            env->string_stack[i] = env->string_stack[i + 1];
+        env->string_stack[env->string_stack_top--] = NULL;
+
     } else {
-        set_error(env,"STORE: Unknown type");
-        push(env, *result);
+        char msg[120];
+        snprintf(msg, sizeof(msg), "STORE: unsupported type %lu", node->type);
+        set_error(env, msg);
+        push(env, value);
     }
-    break;
+
+    mpz_clears(addr_mpz, value, NULL);
+}
+break;
  
 case OP_FETCH:
+char debug_msg[512];
     if (stack->top < 0) {
         set_error(env,"FETCH: Stack underflow for address");
         break;
@@ -773,22 +817,7 @@ case OP_DOT_QUOTE:
         set_error(env, "DOT_QUOTE: Invalid string index");
     }
     break;
-    /*
-    case OP_DOT_QUOTE: OLD VERSION 
-    if (instr.operand < word->string_count && word->strings[instr.operand]) {
-        size_t len = strlen(word->strings[instr.operand]);
-        if (env->buffer_pos + len < BUFFER_SIZE - 1) {
-            strncpy(env->output_buffer + env->buffer_pos, word->strings[instr.operand], len);
-            env->buffer_pos += len;
-            env->output_buffer[env->buffer_pos] = '\0';
-        } else {
-            set_error(env,"DOT_QUOTE: Output buffer overflow");
-        }
-    } else {
-        set_error(env,"DOT_QUOTE: Invalid string index");
-    }
-    break;
- */
+ 
         case OP_CASE:
             if (env->control_stack_top < CONTROL_STACK_SIZE) {
                 env->control_stack[env->control_stack_top].type = CT_CASE;
@@ -819,13 +848,7 @@ case OP_DOT_QUOTE:
             *ip = word->code_length;
             break;
 case OP_BEGIN:
-/*
-     snprintf(debug_msg, sizeof(debug_msg), "BEGIN: control_stack_top=%ld, CONTROL_STACK_SIZE=%d", env->control_stack_top, CONTROL_STACK_SIZE);
-            send_to_channel(debug_msg);
-            
-    if (env->control_stack_top < CONTROL_STACK_SIZE) {
-        env->control_stack[env->control_stack_top++] = (ControlEntry){CT_BEGIN, *ip};
-    } else set_error(env,"Control stack overflow");`*/
+ 
     break;
 case OP_WHILE:
     pop(env, *a);
@@ -1089,36 +1112,27 @@ case OP_PLUSSTORE:
 case OP_CREATE:
     if (instr.operand >= 0 && instr.operand < word->string_count && word->strings[instr.operand]) {
         char *name = word->strings[instr.operand];
-        if (findCompiledWordIndex(name,env) >= 0) {
+        if (findCompiledWordIndex(name, env) >= 0) {
             char msg[512];
             snprintf(msg, sizeof(msg), "CREATE: '%s' already defined", name);
-            set_error(env,msg);
+            set_error(env, msg);
         } else {
             unsigned long index = memory_create(&env->memory_list, name, TYPE_ARRAY);
             if (index == 0) {
-                set_error(env,"CREATE: Memory creation failed");
-            } else if (env->dictionary.count < env->dictionary.capacity) {
-                int dict_idx = env->dictionary.count++;
-                env->dictionary.words[dict_idx].name = strdup(name);
-                env->dictionary.words[dict_idx].code[0].opcode = OP_PUSH;
-                env->dictionary.words[dict_idx].code[0].operand = index;
-                env->dictionary.words[dict_idx].code_length = 1;
-                env->dictionary.words[dict_idx].string_count = 0;
-                MemoryNode *node = memory_get(&env->memory_list, index);
-                if (node && node->type == TYPE_ARRAY) {
-                    node->value.array.data = (mpz_t *)SAFE_MALLOC(sizeof(mpz_t));
-                    mpz_init(node->value.array.data[0]);
-                    mpz_set_ui(node->value.array.data[0], 0);
-                    node->value.array.size = 1;
-                }
+                set_error(env, "CREATE: Memory creation failed");
             } else {
-                resizeDynamicDictionary(&env->dictionary);
+                if (env->dictionary.count >= env->dictionary.capacity) {
+                    resizeDynamicDictionary(&env->dictionary);
+                }
+
                 int dict_idx = env->dictionary.count++;
                 env->dictionary.words[dict_idx].name = strdup(name);
-                env->dictionary.words[dict_idx].code[0].opcode = OP_PUSH;
+                env->dictionary.words[dict_idx].code[0].opcode  = OP_PUSH;
                 env->dictionary.words[dict_idx].code[0].operand = index;
-                env->dictionary.words[dict_idx].code_length = 1;
-                env->dictionary.words[dict_idx].string_count = 0;
+                env->dictionary.words[dict_idx].code_length     = 1;
+                env->dictionary.words[dict_idx].string_count    = 0;
+                env->dictionary.words[dict_idx].immediate       = 0;
+
                 MemoryNode *node = memory_get(&env->memory_list, index);
                 if (node && node->type == TYPE_ARRAY) {
                     node->value.array.data = (mpz_t *)SAFE_MALLOC(sizeof(mpz_t));
@@ -1126,44 +1140,49 @@ case OP_CREATE:
                     mpz_set_ui(node->value.array.data[0], 0);
                     node->value.array.size = 1;
                 }
+
+                // 🔹 cohérence : ajoute aussi ce mot dans la hash
+                addWordToHash(env, name, dict_idx);
             }
         }
     } else {
-        set_error(env,"CREATE: Invalid name");
+        set_error(env, "CREATE: Invalid name");
     }
     break;
+
 case OP_STRING:
     if (instr.operand >= 0 && instr.operand < word->string_count && word->strings[instr.operand]) {
         char *name = word->strings[instr.operand];
-        if (findCompiledWordIndex(name,env) >= 0) {
+        if (findCompiledWordIndex(name, env) >= 0) {
             char msg[512];
             snprintf(msg, sizeof(msg), "STRING: '%s' already defined", name);
-            set_error(env,msg);
+            set_error(env, msg);
         } else {
             unsigned long index = memory_create(&env->memory_list, name, TYPE_STRING);
             if (index == 0) {
-                set_error(env,"STRING: Memory creation failed");
-            } else if (env->dictionary.count < env->dictionary.capacity) {
-                int dict_idx = env->dictionary.count++;
-                env->dictionary.words[dict_idx].name = strdup(name);
-                env->dictionary.words[dict_idx].code[0].opcode = OP_PUSH;
-                env->dictionary.words[dict_idx].code[0].operand = index;
-                env->dictionary.words[dict_idx].code_length = 1;
-                env->dictionary.words[dict_idx].string_count = 0;
+                set_error(env, "STRING: Memory creation failed");
             } else {
-                resizeDynamicDictionary(&env->dictionary);
+                if (env->dictionary.count >= env->dictionary.capacity) {
+                    resizeDynamicDictionary(&env->dictionary);
+                }
+
                 int dict_idx = env->dictionary.count++;
                 env->dictionary.words[dict_idx].name = strdup(name);
-                env->dictionary.words[dict_idx].code[0].opcode = OP_PUSH;
+                env->dictionary.words[dict_idx].code[0].opcode  = OP_PUSH;
                 env->dictionary.words[dict_idx].code[0].operand = index;
-                env->dictionary.words[dict_idx].code_length = 1;
-                env->dictionary.words[dict_idx].string_count = 0;
+                env->dictionary.words[dict_idx].code_length     = 1;
+                env->dictionary.words[dict_idx].string_count    = 0;
+                env->dictionary.words[dict_idx].immediate       = 0;
+
+                // 🔹 ajout à la table de hachage
+                addWordToHash(env, name, dict_idx);
             }
         }
     } else {
-        set_error(env,"STRING: Invalid name");
+        set_error(env, "STRING: Invalid name");
     }
     break;
+
 case OP_QUOTE:
     if (instr.operand >= 0 && instr.operand < word->string_count && word->strings[instr.operand]) {
         char *str = word->strings[instr.operand]; // Pas besoin de dupliquer ici, déjà alloué
@@ -1177,21 +1196,7 @@ case OP_QUOTE:
 case OP_QUOTE_END:
 //do nothing
 break;
-    /* Ancienne version 
-case OP_PRINT:
-    pop(env, *a);
-    if (mpz_fits_slong_p(*a) && mpz_get_si(*a) >= 0 && mpz_get_si(*a) <= env->string_stack_top) {
-        char *str = env->string_stack[mpz_get_si(*a)];
-        if (str) {
-            send_to_channel(str);
-        } else {
-            set_error(env,"PRINT: No string at index");
-        }
-    } else {
-        set_error(env,"PRINT: Invalid string stack index");
-    }
-    break;
-    */ 
+ 
     case OP_PRINT:
     pop(env, *a);
     if (mpz_fits_slong_p(*a) && mpz_get_si(*a) >= 0 && mpz_get_si(*a) <= env->string_stack_top) {
@@ -1327,16 +1332,20 @@ case OP_RECURSE:
     mpz_set_ui(*result, instr.operand);
     push(env, *result);
     break; 
-    case OP_MICRO:
-
+case OP_MILLI:
     gettimeofday(&tv, NULL);
-    mpz_set_si(*result, (long int)(tv.tv_sec * 1000000 + tv.tv_usec)); // Microsecondes
+    // Utiliser mpz directement pour éviter l'overflow de long int
+    mpz_set_ui(*result, (unsigned long)tv.tv_sec);
+    mpz_mul_ui(*result, *result, 1000);
+    mpz_add_ui(*result, *result, tv.tv_usec / 1000);
     push(env, *result);
     break;
-    case OP_MILLI:
 
+case OP_MICRO:
     gettimeofday(&tv, NULL);
-    mpz_set_si(*result, (long int)(tv.tv_sec * 1000 + tv.tv_usec / 1000)); // Millisecondes
+    mpz_set_ui(*result, (unsigned long)tv.tv_sec);
+    mpz_mul_ui(*result, *result, 1000000);
+    mpz_add_ui(*result, *result, tv.tv_usec);
     push(env, *result);
     break;
 case OP_ROLL:
@@ -1484,7 +1493,7 @@ case OP_MOON_PHASE:
     }
     pop(env, *b); // index initial
     pop(env, *a); // limite
-    if (mpz_cmp(*a, *b) == 0) { // If limit == index, skip the loop
+    if ( mpz_cmp(*a, *b) == 0) { // If limit == index, skip the loop
         *ip = instr.operand - 1; // Jump to end (after LOOP)
     } else {
         if (env->return_stack.top + 3 >= STACK_SIZE) {
