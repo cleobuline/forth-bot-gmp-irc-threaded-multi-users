@@ -28,16 +28,25 @@ void *env_interpret_thread(void *arg) {
             if (env->thread_running && env->queue_head == env->queue_tail) {
                 struct timespec ts;
                 clock_gettime(CLOCK_REALTIME, &ts);
-                ts.tv_sec += 7200; // 2 heures
-                if (pthread_cond_timedwait(&env->queue_cond, &env->queue_mutex, &ts) == ETIMEDOUT) {
-                    if (env->queue_head == env->queue_tail && env->thread_running) {
-                        char msg[512];
-                        snprintf(msg, sizeof(msg), "Environment for %s inactive, freeing...", env->nick);
-                        send_to_channel(msg);
-                        freeEnv(env->nick);
-                        pthread_mutex_unlock(&env->queue_mutex);
-                        return NULL;
-                    }
+                ts.tv_sec += 7200;
+                int rc = pthread_cond_timedwait(&env->queue_cond, &env->queue_mutex, &ts);
+                if (rc == ETIMEDOUT && env->queue_head == env->queue_tail && env->thread_running) {
+                    char msg[512];
+                    char nick_copy[MAX_STRING_SIZE];
+                    snprintf(msg, sizeof(msg), "Environment for %s inactive, freeing...", env->nick);
+                    strncpy(nick_copy, env->nick, sizeof(nick_copy) - 1);
+                    nick_copy[sizeof(nick_copy) - 1] = '\0';
+                    pthread_mutex_unlock(&env->queue_mutex);
+
+                    pthread_detach(pthread_self());
+                    send_to_channel(msg);
+
+                    pthread_rwlock_wrlock(&env_rwlock);
+                    env->thread = 0;
+                    pthread_rwlock_unlock(&env_rwlock);
+
+                    freeEnv(nick_copy);
+                    return NULL;
                 }
             }
             pthread_mutex_unlock(&env->queue_mutex);
@@ -47,71 +56,42 @@ void *env_interpret_thread(void *arg) {
     return NULL;
 }
 
-
-
 void interpret(char *input, Stack *stack __attribute__((unused)), Env *env) {
-    if (!env) {
-        send_to_channel("DEBUG: env is NULL");
-        return;
-    }
+    if (!env) return;
 
-    env->error_flag = 0;
+    env->error_flag    = 0;
     env->compile_error = 0;
-
-    if (env->compiling) {
-        // send_to_channel("Continuing previous compilation...");
-    }
 
     char *saveptr;
     char *token = strtok_r(input, " \t\n", &saveptr);
-    while (token && !env->error_flag && !env->compile_error) {
+
+    while (token && !env->error_flag && !env->cancel_flag) {
+
+        // Commentaires entre parenthèses : ( ... )
         if (strcmp(token, "(") == 0) {
-            char *end = strstr(saveptr, ")");
+            char *end = saveptr ? strstr(saveptr, ")") : NULL;
             if (end) saveptr = end + 1;
-            else saveptr = NULL;
+            else     saveptr = NULL;
             token = strtok_r(NULL, " \t\n", &saveptr);
             continue;
         }
 
         compileToken(token, &saveptr, env);
 
-        if (env->compile_error && env->compiling) {
-            break;
-        }
+        // Si erreur de compilation, compileToken a déjà tout nettoyé
+        // (compiling=0, freeCurrentWord, dictionary.count--).
+        // On arrête la boucle mais il n'y a rien d'autre à faire ici.
+        if (env->compile_error) break;
 
         if (!saveptr) break;
         token = strtok_r(NULL, " \t\n", &saveptr);
     }
 
-    if (env->compiling && !env->compile_error && env->control_stack_top == 0) {
-        if (strchr(input, ';')) {
-            if (env->current_word_index >= 0 && env->current_word_index < env->dictionary.capacity) {
-                CompiledWord *dict_word = &env->dictionary.words[env->current_word_index];
-                if (dict_word->name) free(dict_word->name);
-                if (dict_word->code) free(dict_word->code);
-                for (int j = 0; j < dict_word->string_count; j++) {
-                    if (dict_word->strings[j]) free(dict_word->strings[j]);
-                }
-                if (dict_word->strings) free(dict_word->strings);
-
-                *dict_word = env->currentWord;
-                env->currentWord.name = NULL;
-                env->currentWord.code = NULL;
-                env->currentWord.strings = NULL;
-            }
-            env->compiling = 0;
-            env->control_stack_top = 0;
-            env->current_word_index = -1;
-        }
-    } else if (env->compiling && env->compile_error) {
-        set_error(env, "Definition discarded due to error");
-        freeCurrentWord(env);
-        env->compiling = 0;
-        env->control_stack_top = 0;
-        env->current_word_index = -1;
-        env->compile_error = 0;
-        env->dictionary.count--;
-        env->main_stack.top = -1;
-        env->return_stack.top = -1;
-    }
+    // La finalisation d'une définition (";") est entièrement gérée dans
+    // compileToken au moment où il rencontre le token ";".
+    // interpret() n'a plus à s'en occuper.
+    //
+    // Si on sort de la boucle avec compiling=1 et sans erreur, c'est normal :
+    // la définition est multi-commandes IRC (l'utilisateur a envoyé ": FOO 42"
+    // puis ". ;" en deux messages séparés). On attend simplement la suite.
 }
