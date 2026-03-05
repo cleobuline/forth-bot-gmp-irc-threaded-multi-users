@@ -160,11 +160,13 @@ void resizeCompiledWordArrays(CompiledWord *word, int is_code) {
  
 void resizeDynamicDictionary(DynamicDictionary *dict) {
     long int new_capacity = dict->capacity * 2;
-    CompiledWord *new_words = (CompiledWord *)SAFE_REALLOC(dict->words, new_capacity * sizeof(CompiledWord));
+    CompiledWord *new_words = (CompiledWord *)SAFE_REALLOC(dict->words,
+                                                           new_capacity * sizeof(CompiledWord));
     if (!new_words) {
-        send_to_channel("Error: Failed to resize dictionary, operation aborted try to FORGET somme WORDS ");
-        return;  // Ne pas exit, juste abandonner le redimensionnement
+        send_to_channel("Error: Failed to resize dictionary, operation aborted, try to FORGET some WORDS");
+        return;
     }
+
     dict->words = new_words;
 
     for (long int i = dict->count; i < new_capacity; i++) {
@@ -174,27 +176,41 @@ void resizeDynamicDictionary(DynamicDictionary *dict) {
         dict->words[i].code = (Instruction *)calloc(dict->words[i].code_capacity, sizeof(Instruction));
         dict->words[i].string_count = 0;
         dict->words[i].string_capacity = 16;
-        dict->words[i].strings = (char **)calloc(dict->words[i].string_capacity, sizeof(char *));
+        dict->words[i].strings =
+            (char **)calloc(dict->words[i].string_capacity, sizeof(char *));
         dict->words[i].immediate = 0;
 
-if (!dict->words[i].code || !dict->words[i].strings) {
-    send_to_channel("Error: Failed to allocate arrays in resizeDynamicDictionary");
-    for (long int j = dict->count; j < i; j++) {
-        free(dict->words[j].code);
-        free(dict->words[j].strings);
+        if (!dict->words[i].code || !dict->words[i].strings) {
+            send_to_channel("Error: Failed to allocate arrays in resizeDynamicDictionary");
+            for (long int j = dict->count; j <= i; j++) {
+                if (dict->words[j].code) {
+                    free(dict->words[j].code);
+                    dict->words[j].code = NULL;
+                }
+                if (dict->words[j].strings) {
+                    free(dict->words[j].strings);
+                    dict->words[j].strings = NULL;
+                }
+            }
+            // surtout PAS de free(dict->words) / free(new_words) ici
+            return;
+        }
     }
-    free(new_words);
-    return;
-}
-    }
+
     dict->capacity = new_capacity;
 }
+
  
  
  
 void addWord(DynamicDictionary *dict, const char *name, OpCode opcode, int immediate, Env *env) {
     if (dict->count >= dict->capacity) {
         resizeDynamicDictionary(dict);
+    }
+        if (dict->count >= dict->capacity) {
+        // échec du resize, on abandonne proprement
+        send_to_channel("addWord: dictionary is full, cannot add more words");
+        return;
     }
     CompiledWord *word = &dict->words[dict->count];
 
@@ -217,13 +233,25 @@ void addWord(DynamicDictionary *dict, const char *name, OpCode opcode, int immed
     word->string_count = 0;
     word->immediate = immediate;
 
-    if (!word->name || !word->code || !word->strings) {
-        send_to_channel("Erreur : Échec de l’allocation dans addWord");
-        if (word->name) free(word->name);
-        if (word->code) free(word->code);
-        if (word->strings) free(word->strings);
-        return;
+ if (!word->name || !word->code || !word->strings) {
+    send_to_channel("Erreur : Échec de l’allocation dans addWord");
+    if (word->name) {
+        free(word->name);
+        word->name = NULL;
     }
+    if (word->code) {
+        free(word->code);
+        word->code = NULL;
+    }
+    if (word->strings) {
+        free(word->strings);
+        word->strings = NULL;
+    }
+    word->code_length = 0;
+    word->string_count = 0;
+    return;
+}
+
 
     // Ajouter à la table de hachage
     addWordToHash(env, name, dict->count);
@@ -248,6 +276,7 @@ void print_word_definition_irc(int index,Stack *stack __attribute__((unused)), E
 
     CompiledWord *word = &env->dictionary.words[index];
     char def_msg[1024] = "";
+     
     snprintf(def_msg, sizeof(def_msg), ": %s ", word->name);
 
     // Structure to track control flow for IF-ELSE-THEN
@@ -286,13 +315,36 @@ void print_word_definition_irc(int index,Stack *stack __attribute__((unused)), E
 
         // Process the current instruction
         switch (instr.opcode) {
-            case OP_PUSH:
-                if (instr.operand < word->string_count && word->strings[instr.operand]) {
-                    snprintf(instr_str, sizeof(instr_str), "%s ", word->strings[instr.operand]);
-                } else {
-                    snprintf(instr_str, sizeof(instr_str), "%ld ", instr.operand);
-                }
-                break;
+case OP_PUSH: {
+    if (instr.operand & TYPE_MASK) {
+        MemoryNode *node = memory_get(&env->memory_list, instr.operand);
+        if (node) {
+            if (node->type == TYPE_CONSTANT) {
+                char *s = mpz_get_str(NULL, 10, node->value.number);
+                snprintf(instr_str, sizeof(instr_str), "%s ", s ? s : "<err>");
+                if (s) free(s);
+} else if (node->type == TYPE_VAR) {
+    char *s = mpz_get_str(NULL, 10, node->value.number);
+    snprintf(instr_str, sizeof(instr_str), "%s ( variable = %s ) ", node->name, s ? s : "?");
+    if (s) free(s);
+} else if (node->type == TYPE_STRING) {
+    snprintf(instr_str, sizeof(instr_str), "%s ( string = \"%s\" ) ",
+             node->name,
+             node->value.string ? node->value.string : "<empty>");
+} else if (node->type == TYPE_ARRAY) {
+    snprintf(instr_str, sizeof(instr_str), "%s ( array size=%lu ) ",
+             node->name, node->value.array.size);
+}else {
+                snprintf(instr_str, sizeof(instr_str), "<type%lu:%lx> ", node->type, instr.operand);
+            }
+        } else {
+            snprintf(instr_str, sizeof(instr_str), "<bad-ref:%lx> ", instr.operand);
+        }
+    } else {
+        snprintf(instr_str, sizeof(instr_str), "%ld ", instr.operand);
+    }
+    break;
+}
             case OP_CALL:
                 if (instr.operand < env->dictionary.count && env->dictionary.words[instr.operand].name) {
                     snprintf(instr_str, sizeof(instr_str), "%s ", env->dictionary.words[instr.operand].name);
@@ -449,6 +501,7 @@ void print_word_definition_irc(int index,Stack *stack __attribute__((unused)), E
             case OP_TEMP_IMAGE: snprintf(instr_str, sizeof(instr_str), "TEMP-IMAGE "); break;
             case OP_CLEAR_STRINGS: snprintf(instr_str, sizeof(instr_str), "CLEAR-STRINGS "); break;
             case OP_PRINT: snprintf(instr_str, sizeof(instr_str), "PRINT "); break;
+            case OP_MOON_PHASE: snprintf(instr_str, sizeof(instr_str), "MOON-PHASE "); break;
             default:
                 snprintf(instr_str, sizeof(instr_str), "(OP_%d %ld) ", instr.opcode, instr.operand);
                 break;
