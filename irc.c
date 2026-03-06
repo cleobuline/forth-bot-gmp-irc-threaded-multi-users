@@ -229,7 +229,7 @@ void enqueue_irc_msg(const char *msg) {
         pthread_cond_signal(&irc_msg_queue_cond);
     } else {
         fprintf(stderr, "enqueue_irc_msg: IRC message queue full, message ignored: %s\n", msg);
-        send_to_channel("Warning: IRC message queue full, some messages may be lost");
+        // send_to_channel("Warning: IRC message queue full, some messages may be lost");
     }
     pthread_mutex_unlock(&irc_msg_queue_mutex);
 }
