@@ -40,7 +40,7 @@ unsigned long memory_create(MemoryList *list, const char *name, unsigned long ty
     node->index = list->total_created & INDEX_MASK;  // index unique et stable
     node->next  = list->head;
 
-    if (type == TYPE_VAR) {
+    if (type == TYPE_VAR || type == TYPE_CONSTANT) {
         mpz_init(node->value.number);
         mpz_set_ui(node->value.number, 0);
     } else if (type == TYPE_STRING) {
@@ -58,7 +58,7 @@ unsigned long memory_create(MemoryList *list, const char *name, unsigned long ty
 }
 MemoryNode *memory_get(MemoryList *list, unsigned long encoded_index) {
     if (!list || !list->head) {
-        send_to_channel("DEBUG: memory_get - list vide ou NULL");
+       // send_to_channel("DEBUG: memory_get - list vide ou NULL");
         return NULL;
     }
 
@@ -91,13 +91,13 @@ unsigned long memory_get_type(unsigned long encoded_index) {
 void memory_store(MemoryList *list, unsigned long encoded_index, const void *data, Env *env) {
     if (!list || !data) {
         if (env) set_error(env, "memory_store: paramètre invalide (list ou data NULL)");
-        send_to_channel("DEBUG: memory_store - paramètre invalide");
+        // send_to_channel("DEBUG: memory_store - paramètre invalide");
         return;
     }
 
     MemoryNode *node = memory_get(list, encoded_index);
     if (!node) {
-        send_to_channel("DEBUG: memory_store - node NON trouvé via memory_get");
+        //send_to_channel("DEBUG: memory_store - node NON trouvé via memory_get");
         if (env) set_error(env, "memory_store: index mémoire invalide");
         return;
     }
@@ -144,7 +144,7 @@ void memory_fetch(MemoryList *list, unsigned long encoded_index, void *result) {
         return;
     }
 
-    if (node->type == TYPE_VAR) {
+    if (node->type == TYPE_VAR || node->type == TYPE_CONSTANT) {
         mpz_set(*(mpz_t *)result, node->value.number);
     } else if (node->type == TYPE_STRING) {
         char **str_result = (char **)result;
@@ -167,7 +167,7 @@ void memory_free(MemoryList *list, const char *name) {
     if (prev) prev->next = node->next;
     else list->head = node->next;
 
-    if (node->type == TYPE_VAR) {
+    if (node->type == TYPE_VAR || node->type == TYPE_CONSTANT) {
         mpz_clear(node->value.number);
     } else if (node->type == TYPE_STRING && node->value.string) {
         free(node->value.string);
