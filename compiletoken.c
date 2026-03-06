@@ -1,4 +1,3 @@
-
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -72,12 +71,11 @@ void compileToken(char *token, char **input_rest, Env *env) {
                 env->compile_error = 1;
                 return;
             }
-            if (findCompiledWordIndex(next_token, env) >= 0) {
-                char msg[512];
-                snprintf(msg, sizeof(msg), "STRING: '%s' already defined", next_token);
-                set_error(env, msg);
-                env->compile_error = 1;
-                return;
+            /* BUG 4 fix : si le mot existe deja dans le dictionnaire, liberer
+             * l'ancien noeud TYPE_STRING avant d'en creer un nouveau. */
+            int str_existing_idx = findCompiledWordIndex(next_token, env);
+            if (str_existing_idx >= 0) {
+                memory_free(&env->memory_list, next_token);
             }
             unsigned long index = memory_create(&env->memory_list, next_token, TYPE_STRING);
             if (index == 0) {
@@ -251,12 +249,13 @@ void compileToken(char *token, char **input_rest, Env *env) {
         return;
     }
 
-    // Affichage d’une définition avec SEE
+    // Affichage d'une définition avec SEE
     if (strcmp(token, "SEE") == 0) {
         char *next_token = strtok_r(NULL, " \t\n", input_rest);
         if (!next_token) {
             send_to_channel("SEE requires a word name");
-            env->compile_error = 1;
+            /* BUG 1 fix : pas de compile_error — SEE est une commande de debug,
+             * pas une operation de compilation. */
             return;
         }
         int index = findCompiledWordIndex(next_token, env);
@@ -265,9 +264,8 @@ void compileToken(char *token, char **input_rest, Env *env) {
         } else {
             char msg[512];
             snprintf(msg, sizeof(msg), "SEE: Unknown word: %s", next_token);
-            //send_to_channel(msg);
-            set_error(env, msg );
-            env->compile_error = 1;
+            send_to_channel(msg);
+            /* BUG 1 fix : pas de compile_error ni set_error */
         }
         return;
     }
@@ -430,6 +428,11 @@ else if (strcmp(token, "+LOOP") == 0) {
                 return;
             }
             int existing_idx = findCompiledWordIndex(next_token, env);
+            /* BUG 2 fix : liberer l'ancien noeud memoire avant d'en creer un
+             * nouveau, sinon l'ancien TYPE_VAR fuit indefiniment. */
+            if (existing_idx >= 0) {
+                memory_free(&env->memory_list, next_token);
+            }
             unsigned long encoded_index = memory_create(&env->memory_list, next_token, TYPE_VAR);
             if (encoded_index == 0) {
                 set_error(env, "VARIABLE: Memory creation failed");
@@ -804,6 +807,11 @@ else if (strcmp(token, "+LOOP") == 0) {
                 return;
             }
             int existing_idx = findCompiledWordIndex(next_token, env);
+            /* BUG 3 fix : liberer l'ancien noeud TYPE_ARRAY (et son data mpz_t)
+             * avant d'en creer un nouveau, sinon il fuit indefiniment. */
+            if (existing_idx >= 0) {
+                memory_free(&env->memory_list, next_token);
+            }
             unsigned long index = memory_create(&env->memory_list, next_token, TYPE_ARRAY);
             if (index == 0) {
                 set_error(env, "CREATE: Memory creation failed");
@@ -868,6 +876,11 @@ else if (strcmp(token, "+LOOP") == 0) {
                 return;
             }
             int existing_idx = findCompiledWordIndex(next_token, env);
+            /* BUG 2 fix : liberer l'ancien noeud memoire avant d'en creer un
+             * nouveau, sinon l'ancien TYPE_VAR fuit indefiniment. */
+            if (existing_idx >= 0) {
+                memory_free(&env->memory_list, next_token);
+            }
             unsigned long encoded_index = memory_create(&env->memory_list, next_token, TYPE_VAR);
             if (encoded_index == 0) {
                 set_error(env, "VARIABLE: Memory creation failed");
@@ -958,7 +971,14 @@ else if (strcmp(token, "CONSTANT") == 0) {
     mpz_init(value);
     pop(env, value);
 
-    // Création avec TYPE_CONSTANT
+    /* BUG 6 fix : si redéfinition, libérer l'ancien noeud memoire AVANT d'en
+     * creer un nouveau, sinon l'ancien TYPE_CONSTANT reste orphelin dans
+     * memory_list et fuit indefiniment. */
+    int old_idx = findCompiledWordIndex(name, env);
+    if (old_idx >= 0) {
+        memory_free(&env->memory_list, name);
+    }
+
     unsigned long mem_idx = memory_create(&env->memory_list, name, TYPE_CONSTANT);
     if (mem_idx == 0) {
         mpz_clear(value);
@@ -967,50 +987,37 @@ else if (strcmp(token, "CONSTANT") == 0) {
         return;
     }
 
-    memory_store(&env->memory_list, mem_idx, &value,env);
+    memory_store(&env->memory_list, mem_idx, &value, env);
 
-    // Nettoyage ancien mot si redéfinition
-    int old_idx = findCompiledWordIndex(name, env);
-    CompiledWord *word;
+    /* BUG 2 fix : dict_idx toujours initialise ; clearCompiledWord() utilise
+     * pour liberer proprement l'ancien slot (name, code, strings remis a NULL
+     * et capacites a 0), evitant tout double-free ou champ zombie. */
     int dict_idx;
-
     if (old_idx >= 0) {
-        word = &env->dictionary.words[old_idx];
-        // Libération propre de l’ancien contenu
-        if (word->name) free(word->name);
-        if (word->code) free(word->code);
-        for (int j = 0; j < word->string_count; j++)
-            if (word->strings[j]) free(word->strings[j]);
-        if (word->strings) free(word->strings);
+        dict_idx = old_idx;
+        clearCompiledWord(&env->dictionary.words[dict_idx]);
     } else {
         if (env->dictionary.count >= env->dictionary.capacity)
             resizeDynamicDictionary(&env->dictionary);
         dict_idx = env->dictionary.count++;
-        word = &env->dictionary.words[dict_idx];
     }
 
-    word->name = strdup(name);
-    word->code = SAFE_MALLOC(sizeof(Instruction));
+    CompiledWord *word = &env->dictionary.words[dict_idx];
+    word->name          = strdup(name);
+    word->code          = SAFE_MALLOC(sizeof(Instruction));
     word->code_capacity = 1;
-    word->code[0].opcode = OP_PUSH;
+    word->code[0].opcode  = OP_PUSH;
     word->code[0].operand = mem_idx;
-    word->code_length = 1;
-
-    word->strings = SAFE_MALLOC(sizeof(char *));
-    word->string_capacity = 1;
-    word->string_count = 0;
-    word->immediate = 0;
+    word->code_length   = 1;
+    word->strings       = NULL;
+    word->string_capacity = 0;
+    word->string_count  = 0;
+    word->immediate     = 0;
 
     removeWordFromHash(env, name);
-    addWordToHash(env, name, old_idx >= 0 ? old_idx : dict_idx);
+    addWordToHash(env, name, dict_idx);
 
     mpz_clear(value);
-
-    // Petit log pour confirmer (à retirer plus tard)
-    //char dbg[200];
-    //snprintf(dbg, sizeof(dbg), "CONSTANT %s created → mem_idx = %lx, length = %ld", name, mem_idx, word->code_length);
-    //send_to_channel(dbg);
-
     return;
 }
         else if (strcmp(token, "APPEND") == 0) {
@@ -1038,4 +1045,3 @@ else if (strcmp(token, "CONSTANT") == 0) {
         }
     }
 }
- 
