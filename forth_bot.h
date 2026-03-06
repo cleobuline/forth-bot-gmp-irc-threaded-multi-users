@@ -118,28 +118,7 @@ OP_QUESTION_DO,
 
 #define IRC_MSG_QUEUE_SIZE 8000
 
-// Structure pour un nœud de mémoire
-typedef struct MemoryNode {
-    char *name;              // Nom du nœud
-    unsigned long type;      // Type (TYPE_VAR, TYPE_STRING, TYPE_ARRAY)
-    unsigned long index;   // ← index unique, fixé à la création, jamais recalculé
-    union {
-        mpz_t number;        // Pour TYPE_VAR
-        char *string;        // Pour TYPE_STRING
-        struct {
-            mpz_t *data;     // Données pour TYPE_ARRAY
-            unsigned long size; // Taille du tableau
-        } array;
-    } value;
-    struct MemoryNode *next; // Pointeur vers le nœud suivant
-} MemoryNode;
 
-// Structure pour la liste de mémoire
-typedef struct {
-    MemoryNode *head;        // Tête de la liste
-    unsigned long count;     // Nombre total de nœuds
-     unsigned long total_created; // compteur monotone pour les index → jamais décrémenté
-} MemoryList;
 typedef struct {
     char msg[8000];
     int used;
@@ -210,6 +189,30 @@ typedef struct {
     int index;                // Valeur (index dans dictionary.words)
     UT_hash_handle hh;        // Handle requis par uthash
 } WordHash;
+
+// Structure pour un nœud de mémoire
+typedef struct MemoryNode {
+    char *name;              // Nom du nœud
+    unsigned long type;      // Type (TYPE_VAR, TYPE_STRING, TYPE_ARRAY)
+    unsigned long index;   // ← index unique, fixé à la création, jamais recalculé
+    union {
+        mpz_t number;        // Pour TYPE_VAR
+        char *string;        // Pour TYPE_STRING
+        struct {
+            mpz_t *data;     // Données pour TYPE_ARRAY
+            unsigned long size; // Taille du tableau
+        } array;
+    } value;
+    struct MemoryNode *next; // Pointeur vers le nœud suivant
+} MemoryNode;
+
+// Structure pour la liste de mémoire
+typedef struct {
+    MemoryNode *head;        // Tête de la liste
+    unsigned long count;     // Nombre total de nœuds
+     unsigned long total_created; // compteur monotone pour les index → jamais décrémenté
+} MemoryList;
+
 
 typedef struct Env {
     char nick[MAX_STRING_SIZE];
@@ -331,4 +334,5 @@ extern pthread_mutex_t irc_msg_queue_mutex;
 extern pthread_cond_t irc_msg_queue_cond;
 void addWordToHash(Env *env, const char *name, int index);
 void removeWordFromHash(Env *env, const char *name);
+void clearCompiledWord(CompiledWord *word);
 #endif
