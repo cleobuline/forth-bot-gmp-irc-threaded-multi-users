@@ -588,6 +588,7 @@ case OP_STORE:
 break;
  
 case OP_FETCH:
+{
 char debug_msg[512];
     if (stack->top < 0) {
         set_error(env,"FETCH: Stack underflow for address");
@@ -656,7 +657,7 @@ set_error(env,debug_msg);
         push(env, *result);
     }
     break;
-    
+   } 
  
  
  case OP_ALLOT:
@@ -763,6 +764,10 @@ case OP_J:
         case OP_UNLOOP:
     if (env->return_stack.top >= 2) {
         env->return_stack.top -= 3;  // Dépile limit, index, addr
+        /* BUG 3 fix : loop_nesting_level non décrémenté — UNLOOP est utilisé
+         * avec EXIT pour sortir proprement d'une boucle, il doit décrémenter
+         * exactement comme OP_LOOP et OP_PLUS_LOOP le font. */
+        env->loop_nesting_level--;
     } else {
         set_error(env,"UNLOOP without DO");
     }
@@ -922,7 +927,10 @@ case OP_FORGET:
                 if (dict_word->code_length == 1 && dict_word->code[0].opcode == OP_PUSH) {
                     unsigned long encoded_idx = dict_word->code[0].operand;
                     unsigned long type = memory_get_type(encoded_idx);
-                    if (type == TYPE_VAR || type == TYPE_STRING || type == TYPE_ARRAY) {
+                    /* BUG 6 fix : TYPE_CONSTANT oublie — les constantes fuient
+                     * dans memory_list quand elles sont dans la plage oubliee. */
+                    if (type == TYPE_VAR || type == TYPE_STRING ||
+                        type == TYPE_ARRAY || type == TYPE_CONSTANT) {
                         memory_free(&env->memory_list, dict_word->name);
                     }
                 }
@@ -1027,68 +1035,47 @@ case OP_PLUSSTORE:
     }
     pop(env, *b); // offset ou valeur (selon type)
     unsigned long encoded_idx = mpz_get_ui(*a);
-    // char debug_msg[512];
-    /* snprintf(debug_msg, sizeof(debug_msg), "+!: encoded_idx=%lu", encoded_idx);
-    send_to_channel(debug_msg);
-*/
+    /* BUG J fix : debug_msg déclaré localement — ne dépend plus du scope de OP_FETCH */
+    char plusstore_msg[512];
     MemoryNode *node = memory_get(&env->memory_list, encoded_idx);
     if (!node) {
-        snprintf(debug_msg, sizeof(debug_msg), "+!: Invalid memory index %lu", encoded_idx);
-        set_error(env,debug_msg);
+        snprintf(plusstore_msg, sizeof(plusstore_msg), "+!: Invalid memory index %lu", encoded_idx);
+        set_error(env, plusstore_msg);
         push(env, *b);
         push(env, *a);
         break;
     }
 
     if (node->type == TYPE_VAR) {
-        // Cas variable : *b est la valeur à ajouter
         mpz_add(node->value.number, node->value.number, *b);
-        /* snprintf(debug_msg, sizeof(debug_msg), "+!: Added %s to %s, now %s", 
-                 mpz_get_str(NULL, 10, *b), node->name, mpz_get_str(NULL, 10, node->value.number));
-        send_to_channel(debug_msg);
-        */ 
     } else if (node->type == TYPE_ARRAY) {
-        // Cas tableau : vérifier s'il y a un offset sur la pile
         if (node->value.array.size == 0) {
-        set_error(env,"tableau vide");
-        push(env, *a);
-        push(env, *b);
-        break;
-    }
+            set_error(env, "+!: Array is empty");
+            push(env, *b);
+            push(env, *a);
+            break;
+        }
         if (stack->top < 0) {
             // Pas d'offset : *b est la valeur, ajout à l'index 0
-            if (node->value.array.size > 0) {
-                mpz_add(node->value.array.data[0], node->value.array.data[0], *b);
-                snprintf(debug_msg, sizeof(debug_msg), "+!: Added %s to %s[0], now %s", 
-                         mpz_get_str(NULL, 10, *b), node->name, mpz_get_str(NULL, 10, node->value.array.data[0]));
-                send_to_channel(debug_msg);
+            mpz_add(node->value.array.data[0], node->value.array.data[0], *b);
+        } else {
+            // Offset présent : dépiler la valeur, *b est l'offset
+            pop(env, *result);
+            unsigned long offset = mpz_get_ui(*b);
+            if (offset < node->value.array.size) {
+                mpz_add(node->value.array.data[offset], node->value.array.data[offset], *result);
             } else {
-                set_error(env,"+!: Array is empty");
+                snprintf(plusstore_msg, sizeof(plusstore_msg),
+                         "+!: Offset %lu out of bounds (size=%lu)",
+                         offset, node->value.array.size);
+                set_error(env, plusstore_msg);
+                push(env, *result);
                 push(env, *b);
                 push(env, *a);
             }
-        } else {
-            // Offset présent : dépiler la valeur, *b est l'offset
-            pop(env, *result); // valeur à ajouter
-            unsigned long offset = mpz_get_ui(*b); // *b est l'offset
-            if (offset < node->value.array.size) {
-                mpz_add(node->value.array.data[offset], node->value.array.data[offset], *result);
-                /*snprintf(debug_msg, sizeof(debug_msg), "+!: Added %s to %s[%lu], now %s", 
-                         mpz_get_str(NULL, 10, *result), node->name, offset, 
-                         mpz_get_str(NULL, 10, node->value.array.data[offset]));
-                send_to_channel(debug_msg);
-                */ 
-            } else {
-                snprintf(debug_msg, sizeof(debug_msg), "+!: Offset %lu out of bounds (size=%lu)", 
-                         offset, node->value.array.size);
-                set_error(env,debug_msg);
-                push(env, *result); // Remettre valeur
-                push(env, *b);      // Remettre offset
-                push(env, *a);      // Remettre encoded_idx
-            }
         }
     } else {
-        set_error(env,"+!: Not a variable or array");
+        set_error(env, "+!: Not a variable or array");
         push(env, *b);
         push(env, *a);
     }
@@ -1127,9 +1114,15 @@ case OP_CREATE:
 
                 int dict_idx = env->dictionary.count++;
                 env->dictionary.words[dict_idx].name = strdup(name);
+                /* BUG 1 fix : code[] etait NULL (slot calloc), ecrire
+                 * code[0] sans allouer = segfault garanti. */
+                env->dictionary.words[dict_idx].code = SAFE_MALLOC(sizeof(Instruction));
+                env->dictionary.words[dict_idx].code_capacity   = 1;
                 env->dictionary.words[dict_idx].code[0].opcode  = OP_PUSH;
                 env->dictionary.words[dict_idx].code[0].operand = index;
                 env->dictionary.words[dict_idx].code_length     = 1;
+                env->dictionary.words[dict_idx].strings         = NULL;
+                env->dictionary.words[dict_idx].string_capacity = 0;
                 env->dictionary.words[dict_idx].string_count    = 0;
                 env->dictionary.words[dict_idx].immediate       = 0;
 
@@ -1168,9 +1161,14 @@ case OP_STRING:
 
                 int dict_idx = env->dictionary.count++;
                 env->dictionary.words[dict_idx].name = strdup(name);
+                /* BUG 1 fix : meme correction que OP_CREATE */
+                env->dictionary.words[dict_idx].code = SAFE_MALLOC(sizeof(Instruction));
+                env->dictionary.words[dict_idx].code_capacity   = 1;
                 env->dictionary.words[dict_idx].code[0].opcode  = OP_PUSH;
                 env->dictionary.words[dict_idx].code[0].operand = index;
                 env->dictionary.words[dict_idx].code_length     = 1;
+                env->dictionary.words[dict_idx].strings         = NULL;
+                env->dictionary.words[dict_idx].string_capacity = 0;
                 env->dictionary.words[dict_idx].string_count    = 0;
                 env->dictionary.words[dict_idx].immediate       = 0;
 
@@ -1185,8 +1183,13 @@ case OP_STRING:
 
 case OP_QUOTE:
     if (instr.operand >= 0 && instr.operand < word->string_count && word->strings[instr.operand]) {
-        char *str = word->strings[instr.operand]; // Pas besoin de dupliquer ici, déjà alloué
-        push_string(env,str); // Pousse sur string_stack
+        /* BUG 2 fix : on duplique la chaine — push_string prend possession du
+         * pointeur. Si le mot est redéfini ou oublié (FORGET), word->strings[]
+         * sera libéré mais le pointeur resterait dans string_stack → use-after-free.
+         * strdup() garantit une copie independante. */
+        char *str = strdup(word->strings[instr.operand]);
+        if (!str) { set_error(env, "QUOTE: strdup failed"); break; }
+        push_string(env, str); // Pousse sur string_stack
         mpz_set_si(*result, env->string_stack_top); // Index sur la pile principale
         push(env, *result);
     } else {
@@ -1425,8 +1428,7 @@ case OP_ROLL:
 
 case OP_MOON_PHASE:
     if (stack->top < 2) {
-        printf("DEBUG: Stack underflow, top=%ld\n", stack->top);
-        set_error(env, "MOON-PHASE: Stack underflow");
+        set_error(env, "MOON-PHASE: Stack underflow"); /* BUG 7 fix : printf debug supprimé */
         break;
     }
 
@@ -1435,13 +1437,14 @@ case OP_MOON_PHASE:
     get_system_time_utc(&year, &month, &day, &hour, &minute, &second);
  
 
-    pop(env, env->mpz_pool[0]); // Année
+    /* Convention : jour mois année MOON-PHASE
+     * Le sommet est année, dessous mois, dessous jour. */
+    pop(env, env->mpz_pool[0]); // Année (sommet)
     pop(env, env->mpz_pool[1]); // Mois
-    pop(env, env->mpz_pool[2]); // Jour
+    pop(env, env->mpz_pool[2]); // Jour (fond)
     if (!mpz_fits_sint_p(env->mpz_pool[0]) || !mpz_fits_sint_p(env->mpz_pool[1]) ||
         !mpz_fits_sint_p(env->mpz_pool[2])) {
-        printf("DEBUG: Invalid integer conversion\n");
-        set_error(env, "MOON-PHASE: Invalid date values");
+        set_error(env, "MOON-PHASE: Invalid date values"); /* BUG 7 fix : printf debug supprimé */
         push(env, env->mpz_pool[2]); // Jour
         push(env, env->mpz_pool[1]); // Mois
         push(env, env->mpz_pool[0]); // Année
